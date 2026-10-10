@@ -1,0 +1,27 @@
+{
+  "$comment": "Каталог плагинов ZaiChat. Первичный источник — GitHub (raw.githubusercontent.com/hegr121/zai-plugins/main/registry.json), этот файл — фолбэк и базовый каталог. Формат карточки: name, description, author, icon (zap|globe|code|book|search|terminal|star|brain|pencil|image|translate|calculator), url — ссылка на манифест zai-plugin.json или репозиторий.",
+  "updated": "2026-10-11",
+  "plugins": [
+    {
+      "name": "AI PPT — презентации",
+      "description": "Настоящие .pptx: титул, слайды с тезисами, заметки спикера. Кнопка скачивания прямо в чате",
+      "author": "Z.ai port",
+      "icon": "image",
+      "url": "/plugins/ppt/zai-plugin.json"
+    },
+    {
+      "name": "Краткие ответы",
+      "description": "Модель отвечает сжато и по делу: без воды, повторов и лишних вступлений",
+      "author": "Z.ai port",
+      "icon": "zap",
+      "url": "/plugins/terse/zai-plugin.json"
+    },
+    {
+      "name": "План перед ответом",
+      "description": "Сначала краткий план, потом полный структурированный ответ — порядок вместо каши",
+      "author": "Z.ai port",
+      "icon": "brain",
+      "url": "/plugins/prompt-enhancer/zai-plugin.json"
+    }
+  ]
+}
