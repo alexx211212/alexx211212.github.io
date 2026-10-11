@@ -1,0 +1,7 @@
+{
+  "name": "Аналитик данных (как GPT)",
+  "version": "1.0.0",
+  "description": "Как Code Interpreter у ChatGPT: разбирает числа и таблицы, считает пошагово, показывает ход вычислений и выводы",
+  "author": "Z.ai port",
+  "entry": "plugin.js"
+}

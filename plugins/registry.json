@@ -1,14 +1,7 @@
 {
-  "$comment": "Каталог плагинов ZaiChat. Первичный источник — GitHub (raw.githubusercontent.com/hegr121/zai-plugins/main/registry.json), этот файл — фолбэк и базовый каталог. Формат карточки: name, description, author, icon (zap|globe|code|book|search|terminal|star|brain|pencil|image|translate|calculator), url — ссылка на манифест zai-plugin.json или репозиторий.",
+  "$comment": "Каталог плагинов ZaiChat. Первичный источник — GitHub (raw.githubusercontent.com/hegr121/zai-plugins/main/registry.json), этот файл — фолбэк и базовый каталог. v15.4: убраны дублирующие способности модели (презентации, счёт, время), добавлены плагины в стиле GPT и Claude. Формат карточки: name, description, author, icon (zap|globe|code|book|search|terminal|star|brain|pencil|image|translate), url — ссылка на манифест zai-plugin.json.",
   "updated": "2026-10-11",
   "plugins": [
-    {
-      "name": "AI PPT — презентации",
-      "description": "Настоящие .pptx: титул, слайды с тезисами, заметки спикера. Кнопка скачивания прямо в чате",
-      "author": "Z.ai port",
-      "icon": "image",
-      "url": "/plugins/ppt/zai-plugin.json"
-    },
     {
       "name": "Краткие ответы",
       "description": "Модель отвечает сжато и по делу: без воды, повторов и лишних вступлений",
@@ -22,13 +15,6 @@
       "author": "Z.ai port",
       "icon": "brain",
       "url": "/plugins/prompt-enhancer/zai-plugin.json"
-    },
-    {
-      "name": "Калькулятор и конвертер",
-      "description": "Считает пошагово и без ошибок: математика, проценты, конвертация единиц и валют (с пометкой, что курсы приблизительные)",
-      "author": "Z.ai port",
-      "icon": "calculator",
-      "url": "/plugins/calculator/zai-plugin.json"
     },
     {
       "name": "Переводчик",
@@ -85,6 +71,41 @@
       "author": "Z.ai port",
       "icon": "zap",
       "url": "/plugins/letters/zai-plugin.json"
+    },
+    {
+      "name": "Мастер текста (как Claude)",
+      "description": "Пишет и правит тексты по-клодовски: думает перед ответом, структура, живой язык без канцелярита",
+      "author": "Z.ai port",
+      "icon": "pencil",
+      "url": "/plugins/claude-writer/zai-plugin.json"
+    },
+    {
+      "name": "Код-напарник (как Claude)",
+      "description": "Парное программирование: сначала объясняет план, потом код с комментариями, тестами и разбором крайних случаев",
+      "author": "Z.ai port",
+      "icon": "code",
+      "url": "/plugins/claude-coder/zai-plugin.json"
+    },
+    {
+      "name": "Мозговой штурм (как GPT)",
+      "description": "Как у ChatGPT: генерирует много разноплановых идей, группирует по смелости и сразу отмечает самые рабочие",
+      "author": "Z.ai port",
+      "icon": "star",
+      "url": "/plugins/gpt-brainstorm/zai-plugin.json"
+    },
+    {
+      "name": "Аналитик данных (как GPT)",
+      "description": "Как Code Interpreter у ChatGPT: разбирает числа и таблицы, считает пошагово, показывает ход вычислений и выводы",
+      "author": "Z.ai port",
+      "icon": "brain",
+      "url": "/plugins/gpt-analyst/zai-plugin.json"
+    },
+    {
+      "name": "Разбор документов (как Claude)",
+      "description": "Работает с большими текстами: выжимка, ключевые пункты, риски и вопросы, на которые нет ответа в документе",
+      "author": "Z.ai port",
+      "icon": "book",
+      "url": "/plugins/claude-docs/zai-plugin.json"
     }
   ]
 }

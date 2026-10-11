@@ -1,13 +1,15 @@
-/*! ZaiChat v15.3 — слой улучшений поверх v15.
- *  Добавляет: само-починку «сервер не отвечает», оповещения (перегрузка/«ответ готов»),
- *  think-меню LOW/MEDIUM/HIGH/OFF с автозакрытием, кнопку «Поделиться чатом»,
- *  голосовой ввод без зависимости от хостинга, ротацию подсказок,
- *  «Загрузить ещё» в плагинах, аккуратный вход.
+/*! ZaiChat v15.4 — слой улучшений поверх v15 (продолжение v15.3).
+ *  Новое: рассуждения «Низкое/Среднее/Высокое» (быстрое/глубокое/ультра) без мигания языка,
+ *  переключатель Русский/English в настройках, меню моделей и размышлений открываются ВНИЗ,
+ *  подсказки: база 36, ротация; плагины: у кнопки есть название, убраны дурацкие
+ *  (презентации/время/счёт), добавлены плагины в стиле GPT и Claude; перенос чата
+ *  в другой чат-агент; переименование чата; guest убран полностью + гостевой токен
+ *  больше не перехватывается на полпути входа; производительность и память.
  *  Работает поверх приложения и не мешает ему: всё в try/catch. */
 (function () {
   'use strict';
   if (window.__z16x) return;
-  window.__z16x = { v: '15.3' };
+  window.__z16x = { v: '15.4' };
 
   /* ================= утилиты ================= */
   function $(s, r) { try { return (r || document).querySelector(s); } catch (_) { return null; } }
@@ -33,6 +35,30 @@
     } catch (_) { try { el.value = value; } catch (_2) {} }
   }
 
+  /* ================= язык: Русский по умолчанию, EN по желанию ================= */
+  var lang = 'ru';
+  try { lang = localStorage.getItem('z16lang') === 'en' ? 'en' : 'ru'; } catch (_) {}
+  function isEn() { return lang === 'en'; }
+  function setLang(l) {
+    lang = (l === 'en') ? 'en' : 'ru';
+    try { localStorage.setItem('z16lang', lang); } catch (_) {}
+    curSet = []; /* подсказки перерисуются под язык */
+    sweep();
+  }
+  window.__z16setLang = setLang;
+  /* словарь видимых надписей (только то, что трогает слой; нативный интерфейс русский) */
+  var DICT_EN = {
+    'Уровень размышлений': 'Thinking level',
+    'Размышления': 'Think',
+    'Низкое': 'Low', 'Среднее': 'Medium', 'Высокое': 'High', 'Выключить': 'Off',
+    'Поделиться чатом': 'Share chat', 'Перенести в новый чат': 'Continue in new chat',
+    'Плагины': 'Plugins', 'Поиск': 'Search', 'Настройки': 'Settings',
+    'Аккаунт Z.ai': 'Z.ai account', 'Чаты': 'Chats', 'Задачи': 'Tasks',
+    'Новый чат': 'New chat', 'Новая задача': 'New task',
+    'Загрузить ещё': 'Load more', 'Установить': 'Install', 'Удалить': 'Delete',
+    'Переименовать': 'Rename', 'Меню чата': 'Chat menu'
+  };
+
   /* ================= тосты ================= */
   var toastBox = null, lastToastText = '', lastToastAt = 0;
   function ensureBox() {
@@ -45,7 +71,7 @@
   function toast(msg, ms) {
     try {
       var now = Date.now();
-      if (msg === lastToastText && now - lastToastAt < 4000) return; // без спама
+      if (msg === lastToastText && now - lastToastAt < 4000) return; /* без спама */
       lastToastText = msg; lastToastAt = now;
       var box = ensureBox();
       var t = document.createElement('div');
@@ -60,9 +86,9 @@
       while (box.children.length > 2) box.removeChild(box.firstChild);
     } catch (_) {}
   }
-  window.__z16toast = toast; // для тестов
+  window.__z16toast = toast; /* для тестов */
 
-  /* ================= 1. fetch: само-починка + сбор токена/chat_id ================= */
+  /* ================= 1. fetch: само-починка + сбор токена/chat_id + фильтры ================= */
   var ZAI = 'https://chat.z.ai';
   var lastToken = '', lastChat = '';
   try {
@@ -70,6 +96,18 @@
     lastChat = sessionStorage.getItem('z16chat') || '';
   } catch (_) {}
   var realFetch = window.fetch.bind(window);
+
+  /* гостевой JWT? payload.role === 'guest' у chat.z.ai — такой токен входом не считается */
+  function isGuestJwt(tok) {
+    try {
+      var p = String(tok || '').split('.')[1];
+      if (!p) return false;
+      p = p.replace(/-/g, '+').replace(/_/g, '/');
+      while (p.length % 4) p += '=';
+      var j = JSON.parse(decodeURIComponent(escape(atob(p))));
+      return String(j && j.role || '').toLowerCase() === 'guest';
+    } catch (_) { return false; }
+  }
 
   function rememberToken(hs) {
     try {
@@ -118,6 +156,44 @@
     return c;
   }
 
+  /* --- RAM-кэш медленных GET (модели/список чатов): переоткрытие мгновенно --- */
+  var ramCache = new Map(); /* url -> {t, body} */
+  var RAM_TTL_MODELS = 300000, RAM_TTL_CHATS = 60000, RAM_MAX = 16;
+  function ramGet(url) {
+    var e = ramCache.get(url);
+    if (!e) return null;
+    var ttl = url.indexOf('/models') !== -1 ? RAM_TTL_MODELS : RAM_TTL_CHATS;
+    if (Date.now() - e.t > ttl) { ramCache.delete(url); return null; }
+    return e.body;
+  }
+  function ramPut(url, body) {
+    try {
+      if (ramCache.size >= RAM_MAX) { /* LRU без утечек: удаляем самый старый */
+        var oldest = null, ot = Infinity;
+        ramCache.forEach(function (v, k) { if (v.t < ot) { ot = v.t; oldest = k; } });
+        if (oldest) ramCache.delete(oldest);
+      }
+      ramCache.set(url, { t: Date.now(), body: body });
+    } catch (_) {}
+  }
+
+  /* --- каталог плагинов: убираем дурацкие (презентации/время/счёт) из любого источника --- */
+  var PLUGIN_BLOCK = /(презентац|\.pptx?|\bppt\b|калькулятор|конвертер|знание времени|точное время|секундомер|таймер|часы[ ,]|будильн)/i;
+  function filterRegistry(text) {
+    try {
+      var j = JSON.parse(text);
+      if (j && Array.isArray(j.plugins)) {
+        var before = j.plugins.length;
+        j.plugins = j.plugins.filter(function (p) { return !PLUGIN_BLOCK.test((p && p.name || '') + ' ' + (p && p.description || '')); });
+        if (j.plugins.length !== before) {
+          j.$note = 'ZaiChat: убраны плагины, дублирующие способности модели (презентации, счёт, время)';
+          return JSON.stringify(j);
+        }
+      }
+    } catch (_) {}
+    return text;
+  }
+
   window.fetch = function (input, init) {
     try {
       var url = typeof input === 'string' ? input : (input && input.url) || String(input || '');
@@ -130,7 +206,30 @@
       var mProxy = /^\/api\/zai\/(.*)$/.exec(url);
       if (mProxy) { url = ZAI + '/' + mProxy[1]; input = url; }
 
-      /* запоминаем id текущего чата (для «Поделиться») */
+      /* каталог плагинов: фильтруем и основной (GitHub), и локальный источник */
+      if (method === 'GET' && /registry\.json/.test(url)) {
+        return realFetch(input, init).then(function (res) {
+          try {
+            return res.clone().text().then(function (t) {
+              var ft = filterRegistry(t);
+              if (ft !== t) return new Response(ft, { status: res.status, headers: res.headers });
+              return res;
+            }).catch(function () { return res; });
+          } catch (_) { return res; }
+        });
+      }
+
+      /* RAM-кэш: модели и страницы списка чатов */
+      var cacheable = method === 'GET' && (url.indexOf('/api/v1/models') !== -1 ||
+        /^https?:\/\/[^/]+\/api\/v1\/chats\/\?page=\d+$/.test(url));
+      if (cacheable) {
+        var hit = ramGet(url);
+        if (hit) {
+          try { return Promise.resolve(new Response(hit, { status: 200, headers: { 'Content-Type': 'application/json' } })); } catch (_) {}
+        }
+      }
+
+      /* запоминаем id текущего чата (для «Поделиться» и «Перенести») */
       if (url.indexOf('/chat/completions') !== -1 && init && typeof init.body === 'string') {
         try {
           var bj = JSON.parse(init.body);
@@ -160,7 +259,7 @@
       function wafRetry() {
         if (attempt >= MAX_TRY) return null;
         attempt++;
-        toast('Защита сервера сработала — переподключаюсь (' + attempt + '/' + MAX_TRY + ')…');
+        toast(isEn() ? 'Server protection triggered — reconnecting (' + attempt + '/' + MAX_TRY + ")…" : 'Защита сервера сработала — переподключаюсь (' + attempt + '/' + MAX_TRY + ')…');
         flip();
         return warmup(true).then(function () { return sleep(DELAYS[Math.min(attempt - 1, DELAYS.length - 1)]); });
       }
@@ -173,18 +272,21 @@
               res.clone().text().then(function (body) {
                 var tail = body.slice(-4000);
                 if (/outdated|client version/i.test(tail)) {
-                  toast('Сервер обновился — перезапустите приложение, чтобы обновить совместимость');
+                  toast(isEn() ? 'The server updated — restart the app to refresh compatibility' : 'Сервер обновился — перезапустите приложение, чтобы обновить совместимость');
                 } else if (/перегруж|overloaded|too many|высокий спрос|high demand|попробуйте позже/i.test(tail)) {
-                  toast('Модель сейчас перегружена — повторите запрос через минуту');
+                  toast(isEn() ? 'The model is overloaded — retry in a minute' : 'Модель сейчас перегружена — повторите запрос через минуту');
                 } else {
                   answerReady();
                 }
               }).catch(function () {});
             } catch (_) {}
           }
+          if (res.ok && cacheable) {
+            try { res.clone().text().then(function (t) { ramPut(url, t); }).catch(function () {}); } catch (_) {}
+          }
           if (st < 400 || attempt >= MAX_TRY) {
             if (attempt >= MAX_TRY && (st === 429 || st === 502 || st === 503)) {
-              toast('Модель перегружена. Подождите минуту и повторите запрос.');
+              toast(isEn() ? 'Model overloaded. Wait a minute and retry.' : 'Модель перегружена. Подождите минуту и повторите запрос.');
             }
             return res;
           }
@@ -199,7 +301,7 @@
           if (st === 405 || st === 429 || st === 502 || st === 503 || st === 504) {
             if (st === 429 || st >= 502) {
               attempt++;
-              toast('Модель перегружена — автоматически повторяю (' + attempt + '/' + MAX_TRY + ')…');
+              toast(isEn() ? 'Model overloaded — retrying automatically (' + attempt + '/' + MAX_TRY + ')…' : 'Модель перегружена — автоматически повторяю (' + attempt + '/' + MAX_TRY + ')…');
               return sleep(900 + Math.floor(Math.random() * 600)).then(run);
             }
             var p2 = wafRetry();
@@ -220,15 +322,42 @@
   };
 
   /* ================= 2. оповещения «ответ готов» ================= */
-  var READY = ['Ответ готов ✅', 'Модель ответила — глянь 📩', 'Готово! Ответ ждёт в чате', 'Ответ сформирован ✨', 'Есть результат — заходи 🙌'];
+  var READY_RU = ['Ответ готов ✅', 'Модель ответила — глянь 📩', 'Готово! Ответ ждёт в чате', 'Ответ сформирован ✨', 'Есть результат — заходи 🙌'];
+  var READY_EN = ['Reply is ready ✅', 'The model answered — take a look 📩', 'Done! The answer is in the chat', 'Response generated ✨', 'Result is here — check it 🙌'];
   function answerReady() {
-    toast(READY[Math.floor(Math.random() * READY.length)], 2600);
+    var pool = isEn() ? READY_EN : READY_RU;
+    var msg = pool[Math.floor(Math.random() * pool.length)];
+    toast(msg, 2600);
     vibrate([60, 40, 60]);
+    /* приложение свёрнуто — уведомление как в ChatGPT (несколько вариантов фраз) */
+    try {
+      if (document.hidden && window.ZaiApp && typeof window.ZaiApp.notifyReady === 'function') {
+        window.ZaiApp.notifyReady(isEn() ? 'Reply is ready' : 'Ответ готов', msg);
+      }
+    } catch (_) {}
   }
 
-  /* ================= 3. think-меню: EN + автозакрытие ================= */
-  var THINK_MAP = { 'Лоу': 'LOW', 'Медиум': 'MEDIUM', 'Хай': 'HIGH', 'Выключить': 'OFF' };
-  var PILL_MAP = { 'Быстрые': 'LOW', 'Глубокие': 'MEDIUM', 'Ультра': 'HIGH', 'Размышления': 'Think' };
+  /* ================= 3. рассуждения: Низкое/Среднее/Высокое + вниз + автозакрытие ================= */
+  /* нативные подписи v15: Лоу/Медиум/Хай/Выключить — меняем на понятную шкалу.
+     Смысл по ТЗ: низкое = быстрое, среднее = глубокое, высокое = ультра. */
+  var THINK_RU = [
+    { from: 'Лоу', to: 'Низкое', desc: 'Быстро — минимальные размышления' },
+    { from: 'Медиум', to: 'Среднее', desc: 'Глубоко — тщательнее и точнее' },
+    { from: 'Хай', to: 'Высокое', desc: 'Ультра — максимум качества' },
+    { from: 'Выключить', to: 'Выключить', desc: 'Отвечает сразу, без размышлений' }
+  ];
+  var THINK_EN = [
+    { from: 'Лоу', to: 'Low', desc: 'Fast — minimal reasoning' },
+    { from: 'Медиум', to: 'Medium', desc: 'Deep — more thorough and precise' },
+    { from: 'Хай', to: 'High', desc: 'Ultra — maximum quality' },
+    { from: 'Выключить', to: 'Off', desc: 'Answers instantly, no reasoning' }
+  ];
+  /* нативная пилюля: Ультра/Глубокие/Размышления(low&off) — помним, что выбрано */
+  var PILL_RU = { 'Ультра': 'Высокое', 'Глубокие': 'Среднее' };
+  var PILL_EN = { 'Ультра': 'High', 'Глубокие': 'Medium', 'Размышления': 'Think' };
+  var thinkChosen = '';
+  try { thinkChosen = sessionStorage.getItem('z16think') || ''; } catch (_) {}
+
   function closeThink() {
     try { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true })); } catch (_) {}
     setTimeout(function () {
@@ -238,52 +367,119 @@
       } catch (_) {}
     }, 90);
   }
-  function fixThinkMenu() {
-    var wr = $('[data-radix-popper-content-wrapper]');
+  function fixThinkMenu(root) {
+    var wr = null;
+    if (root && root.querySelectorAll) {
+      wr = root.matches && root.matches('[data-radix-popper-content-wrapper]') ? root : $('[data-radix-popper-content-wrapper]', root);
+      if (!wr) wr = root.closest && root.closest('[data-radix-popper-content-wrapper]');
+    }
+    if (!wr) wr = $('[data-radix-popper-content-wrapper]');
     if (!wr) return;
     var btns = $$('button', wr);
     var touched = false;
     btns.forEach(function (b) {
       var t = (b.textContent || '').trim();
-      for (var ru in THINK_MAP) {
-        if (t.indexOf(ru) === 0) {
+      var map = isEn() ? THINK_EN : THINK_RU;
+      for (var i = 0; i < map.length; i++) {
+        if (t.indexOf(map[i].from) === 0) {
           touched = true;
           if (!b.__z16w) {
             b.__z16w = true;
-            b.addEventListener('click', function () { setTimeout(closeThink, 140); }, true);
+            b.addEventListener('click', function () {
+              try { thinkChosen = ['low', 'medium', 'high', 'off'][i]; sessionStorage.setItem('z16think', thinkChosen); } catch (_) {}
+              vibrate(8);
+              setTimeout(closeThink, 140); /* меню закрывается само после выбора */
+            }, true);
           }
-          allText(b).forEach(function (tn) {
-            var tv = tn.nodeValue.trim();
-            if (THINK_MAP[tv]) tn.nodeValue = tn.nodeValue.replace(tv, THINK_MAP[tv]);
-          });
+          /* заменяем и подпись, и описание (анти-мигание: меняем точечно текстовые узлы) */
+          var texts = allText(b).filter(function (tn) { return tn.nodeValue.trim(); });
+          if (texts[0] && texts[0].nodeValue.trim() === map[i].from) texts[0].nodeValue = map[i].to;
+          if (texts[1]) {
+            var cur = texts[1].nodeValue.trim();
+            var isNativeDesc = /^Быстрые размышления|^Глубокие размышления|^Ультра: максимум|^Отвечает сразу/.test(cur) ||
+              /^Fast|^Deep|^Ultra|^Answers instantly/.test(cur);
+            if (isNativeDesc || b.__z16d !== map[i].to + '|' + map[i].desc) {
+              texts[1].nodeValue = map[i].desc;
+              b.__z16d = map[i].to + '|' + map[i].desc;
+            }
+          }
+          break;
         }
       }
     });
-    if (touched && !wr.__z16t) {
-      wr.__z16t = true;
-      wr.addEventListener('click', function (e) {
-        var b = e.target && e.target.closest && e.target.closest('button');
-        if (b) vibrate(8);
-      }, true);
-    }
+    if (touched) forceDown(wr, 'Уровень размышлений');
   }
   function fixThinkPill() {
     var b = $('footer button[aria-label="Уровень размышлений"]');
     if (!b) return;
     var t = (b.textContent || '').trim();
-    var en = PILL_MAP[t];
-    if (!en) return;
+    var want = null;
+    if (isEn()) {
+      /* и нативные RU, и наши RU-подписи → EN */
+      if (t === 'Ультра' || t === 'Высокое') want = 'High';
+      else if (t === 'Глубокие' || t === 'Среднее') want = 'Medium';
+      else if (t === 'Низкое') want = 'Low';
+      else if (t === 'Размышления') want = thinkChosen === 'low' ? 'Low' : 'Think';
+    } else {
+      if (t === 'Ультра' || t === 'High') want = 'Высокое';
+      else if (t === 'Глубокие' || t === 'Medium') want = 'Среднее';
+      else if (t === 'Низкое') want = 'Низкое';
+      else if (t === 'Think' || t === 'Low' || t === 'High' || t === 'Medium') want = 'Размышления';
+      else if (t === 'Размышления' && thinkChosen === 'low') want = 'Низкое';
+    }
+    if (!want || want === t) return;
     directText(b).forEach(function (tn) {
-      if (tn.nodeValue.trim() === t) tn.nodeValue = tn.nodeValue.replace(t, en);
+      if (tn.nodeValue.trim() === t) tn.nodeValue = want;
     });
+    $$('span', b).forEach(function (sp) {
+      if (sp.textContent.trim() === t) sp.textContent = want;
+    });
+  }
+
+  /* --- меню моделей и размышлений: открываются ВНИЗ, а не за верхний край --- */
+  function forceDown(wr, triggerLabel) {
+    try {
+      var trig = $('button[aria-label="' + triggerLabel + '"]');
+      if (!trig) return;
+      var r = trig.getBoundingClientRect();
+      var vw = window.innerWidth, vh = window.innerHeight;
+      var cw = wr.offsetWidth || 260, ch = wr.offsetHeight || 200;
+      var left = Math.round(Math.max(8, Math.min(r.left, vw - cw - 8)));
+      var top = Math.round(r.bottom + 8);
+      var maxH = vh - top - 12;
+      if (maxH < 140) { /* совсем низко — прижмём к низу экрана с прокруткой */
+        maxH = Math.max(140, Math.round(vh * 0.45));
+        top = vh - maxH - 8;
+      }
+      wr.style.setProperty('top', top + 'px', 'important');
+      wr.style.setProperty('left', left + 'px', 'important');
+      wr.style.setProperty('transform', 'none', 'important');
+      wr.style.setProperty('max-height', maxH + 'px', 'important');
+      wr.style.setProperty('overflow-y', 'auto', 'important');
+    } catch (_) {}
+  }
+  function forceMenusDown() {
+    var wrs = $$('[data-radix-popper-content-wrapper]');
+    for (var i = 0; i < wrs.length; i++) {
+      var wr = wrs[i];
+      if (!wr.getBoundingClientRect().height) continue;
+      var txt = wr.textContent || '';
+      if ($('button[aria-label="Уровень размышлений"]') && /Уровень размышлений|Thinking level|Лоу|Медиум|Хай|Low|Medium|High|Выключить|Off/.test(txt)) {
+        forceDown(wr, 'Уровень размышлений');
+      } else if ($('button[aria-label="Выбрать модель"]') && /Флагман|GLM|Баланс|свой API|fast/i.test(txt)) {
+        forceDown(wr, 'Выбрать модель');
+      }
+    }
   }
 
   /* ================= 4. «Поделиться чатом» вместо «Новый чат» (справа сверху) ================= */
   function fixShareBtn() {
-    var b = $('header button[aria-label="Новый чат"]');
+    /* после первой переименования aria-label уже не «Новый чат» — ищем по всем трём состояниям */
+    var b = $('header button[aria-label="Новый чат"], header button[aria-label="Поделиться чатом"], header button[aria-label="Share chat"]');
     if (!b) return;
-    b.setAttribute('aria-label', 'Поделиться чатом');
-    b.setAttribute('title', 'Поделиться чатом');
+    var lbl = isEn() ? 'Share chat' : 'Поделиться чатом';
+    if (b.getAttribute('aria-label') !== lbl) b.setAttribute('aria-label', lbl);
+    b.setAttribute('title', lbl);
     var svg = $('svg', b);
     if (svg && !svg.__z16i) {
       svg.__z16i = true;
@@ -302,41 +498,41 @@
   function doShare() {
     Promise.resolve().then(function () {
       if (!lastChat) {
-        toast('Сначала отправьте сообщение в чат — после этого чатом можно поделиться');
+        toast(isEn() ? 'Send a message first — then you can share the chat' : 'Сначала отправьте сообщение в чат — после этого чатом можно поделиться');
         return;
       }
       if (!lastToken) {
-        toast('Для ссылки нужен вход в аккаунт — открываю окно входа…');
+        toast(isEn() ? 'A link requires signing in — opening the login window…' : 'Для ссылки нужен вход в аккаунт — открываю окно входа…');
         try { window.dispatchEvent(new CustomEvent('zai-open-dialog', { detail: 'account' })); } catch (_) {}
         return;
       }
-      toast('Готовлю ссылку…', 1600);
+      toast(isEn() ? 'Preparing the link…' : 'Готовлю ссылку…', 1600);
       return window.fetch(ZAI + '/api/v1/chats/' + lastChat + '/share', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + lastToken },
         body: '{}'
       }).then(function (res) {
-        if (!res.ok) { toast('Не удалось создать ссылку (' + res.status + '). Попробуйте ещё раз.'); return; }
+        if (!res.ok) { toast(isEn() ? 'Could not create the link (' + res.status + '). Try again.' : 'Не удалось создать ссылку (' + res.status + '). Попробуйте ещё раз.'); return; }
         return res.json().catch(function () { return {}; }).then(function (d) {
           var sid = d && (d.share_id || d.id || d.slug);
           var link = 'https://chat.z.ai/s/' + (sid || lastChat);
           shareOut(link);
         });
-      }).catch(function () { toast('Не удалось поделиться — проверьте интернет'); });
+      }).catch(function () { toast(isEn() ? 'Sharing failed — check the internet' : 'Не удалось поделиться — проверьте интернет'); });
     }).catch(function () {});
   }
   function shareOut(link) {
     try {
       if (navigator.share) {
         navigator.share({ title: 'Чат Z.ai', url: link }).then(function () {
-          toast('Ссылка на чат отправлена ✅');
+          toast(isEn() ? 'Chat link sent ✅' : 'Ссылка на чат отправлена ✅');
         }).catch(function () {});
         return;
       }
     } catch (_) {}
     var ok = false;
-    try { navigator.clipboard.writeText(link).then(function () { toast('Ссылка скопирована — откроется и на сайте, и в приложении', 4500); }, function () { copyFallback(link); }); ok = true; } catch (_) {}
+    try { navigator.clipboard.writeText(link).then(function () { toast(isEn() ? 'Link copied — opens on the site and in the app' : 'Ссылка скопирована — откроется и на сайте, и в приложении', 4500); }, function () { copyFallback(link); }); ok = true; } catch (_) {}
     if (!ok) copyFallback(link);
   }
   function copyFallback(text) {
@@ -348,8 +544,144 @@
       ta.select();
       var ok = document.execCommand('copy');
       ta.remove();
-      toast(ok ? 'Ссылка скопирована — откроется и на сайте, и в приложении' : text, 6000);
+      toast(ok ? (isEn() ? 'Link copied — opens on the site and in the app' : 'Ссылка скопирована — откроется и на сайте, и в приложении') : text, 6000);
     } catch (_) { toast(text, 8000); }
+  }
+
+  /* ================= 4b. «Перенести в новый чат» — полная картина для нового агента ================= */
+  function addTransferBtn() {
+    var header = $('header');
+    if (!header) return;
+    var share = $('header button[aria-label="Поделиться чатом"], header button[aria-label="Share chat"], header button[aria-label="Новый чат"]');
+    if (!share || !share.parentElement) return;
+    var mine = $('header button[aria-label="Перенести в новый чат"], header button[aria-label="Continue in new chat"]');
+    if (mine) { if (isEn() && mine.getAttribute('aria-label') !== 'Continue in new chat') { mine.setAttribute('aria-label', 'Continue in new chat'); mine.title = 'Continue in new chat'; } return; }
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = share.className || '';
+    b.setAttribute('aria-label', isEn() ? 'Continue in new chat' : 'Перенести в новый чат');
+    b.title = isEn() ? 'Continue in new chat' : 'Перенести в новый чат';
+    b.style.cssText = 'display:flex;align-items:center;justify-content:center';
+    b.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4c5 0 7 2.2 7 6 0 4.6-2.6 7.8-8.1 7.8H9"/><path d="m12 14-4 4 4 4"/><path d="M9 14H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1"/></svg>';
+    b.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      transferChat();
+    }, true);
+    try { share.parentElement.insertBefore(b, share); } catch (_) { share.parentElement.appendChild(b); }
+  }
+
+  function msgText(c) {
+    try {
+      if (typeof c === 'string') return c;
+      if (Array.isArray(c)) return c.map(function (p) {
+        if (typeof p === 'string') return p;
+        return (p && (p.text || p.content)) || '';
+      }).join('\n');
+      if (c && typeof c === 'object') return c.text || c.content || '';
+    } catch (_) {}
+    return String(c || '');
+  }
+
+  function buildHandoff(msgs) {
+    var head = isEn()
+      ? 'Chat handoff from ZaiChat. Continue this conversation from where it stopped, keeping full context. History:'
+      : 'Перенос чата из приложения ZaiChat. Продолжи этот диалог с того места, где он остановился, сохранив весь контекст. История:';
+    var lines = [head, ''];
+    var n = 0;
+    for (var i = 0; i < msgs.length; i++) {
+      var m = msgs[i] || {};
+      var role = m.role === 'user' ? (isEn() ? 'User' : 'Пользователь') : (isEn() ? 'AI' : 'ИИ');
+      var txt = msgText(m.content).trim();
+      if (!txt) continue;
+      n++;
+      lines.push(n + '. ' + role + ': ' + txt);
+    }
+    var out = lines.join('\n');
+    if (out.length > 14000) out = '…' + out.slice(-13800);
+    return { text: out, count: n };
+  }
+
+  function transferChat() {
+    Promise.resolve().then(function () {
+      if (!lastToken) {
+        toast(isEn() ? 'Transfer requires signing in (menu → Z.ai account)' : 'Для переноса нужен вход в аккаунт (меню → Аккаунт Z.ai)');
+        return;
+      }
+      if (!lastChat) {
+        toast(isEn() ? 'Send a message first — then the chat can be transferred' : 'Сначала отправьте сообщение в чат — после этого его можно перенести');
+        return;
+      }
+      toast(isEn() ? 'Collecting the chat…' : 'Собираю чат…', 1500);
+      return window.fetch(ZAI + '/api/v1/chats/' + lastChat, {
+        credentials: 'include',
+        headers: { 'Authorization': 'Bearer ' + lastToken }
+      }).then(function (res) {
+        if (!res.ok) throw new Error('status ' + res.status);
+        return res.json();
+      }).then(function (d) {
+        var msgs = (d && (d.messages || (d.chat && d.chat.messages) || d.history)) || [];
+        if (!Array.isArray(msgs) || !msgs.length) throw new Error('empty');
+        var h = buildHandoff(msgs);
+        if (!h.count) throw new Error('empty');
+        deliverHandoff(h.text);
+      }).catch(function () {
+        /* запасной путь — собираем видимые сообщения прямо из DOM */
+        var h = buildHandoffFromDom();
+        if (h.count < 2) {
+          toast(isEn() ? 'Could not collect the chat — try again in a moment' : 'Не удалось собрать чат — попробуйте ещё раз через мгновение');
+          return;
+        }
+        deliverHandoff(h.text);
+      });
+    }).catch(function () {});
+  }
+
+  function buildHandoffFromDom() {
+    /* сообщения в v15: блоки внутри main; пользовательские — с классом пузыря, ИИ — длинные */
+    var msgs = [];
+    try {
+      var main = $('main');
+      var nodes = $$('main div[class*="whitespace-pre-wrap"], main .markdown-body, main [data-message]');
+      nodes.forEach(function (el) {
+        var t = (el.textContent || '').trim();
+        if (t.length < 2) return;
+        var isUser = !!el.closest('div[class*="justify-end"], div[class*="ml-auto"], div[class*="bg-primary"]');
+        msgs.push({ role: isUser ? 'user' : 'assistant', content: t });
+      });
+      if (msgs.length > 40) msgs = msgs.slice(-40);
+    } catch (_) {}
+    return buildHandoff(msgs);
+  }
+
+  function deliverHandoff(text) {
+    /* копия в буфер — страховка */
+    try { navigator.clipboard.writeText(text).catch(function () {}); } catch (_) {}
+    /* открываем новый чат кнопкой сайдбара и вставляем текст переноса */
+    var opened = false;
+    try {
+      var btns = $$('aside button, div[class*="bg-sidebar"] button');
+      for (var i = 0; i < btns.length; i++) {
+        if ((btns[i].textContent || '').trim() === (isEn() ? 'New chat' : 'Новый чат')) {
+          btns[i].click();
+          opened = true;
+          break;
+        }
+      }
+    } catch (_) {}
+    setTimeout(function () {
+      var ta = $('footer textarea');
+      if (ta) {
+        setNativeValue(ta, text);
+        ta.focus();
+        toast(isEn()
+          ? 'Transfer ready: the whole history is in the input — press send'
+          : 'Перенос готов: вся история в поле ввода — отправьте сообщение', 5200);
+      } else {
+        copyFallback(text);
+        toast(isEn() ? 'Transfer text copied — paste it into a new chat' : 'Текст переноса скопирован — вставьте его в новый чат', 5200);
+      }
+    }, opened ? 450 : 0);
   }
 
   /* ================= 5. микрофон: независимый голосовой ввод ================= */
@@ -368,8 +700,45 @@
   function micClick(btn) {
     if (micState === 'recording') { stopMic(); return; }
     if (micState !== 'idle') return;
+    /* 1) нативное распознавание Android (Google) — не зависит от хостинга и работает точнее;
+       2) Web Speech API; 3) запись + ASR Z.ai */
+    try {
+      if (window.ZaiApp && typeof window.ZaiApp.nativeSpeechAvailable === 'function'
+          && typeof window.ZaiApp.startNativeSpeech === 'function' && window.ZaiApp.nativeSpeechAvailable()) {
+        startNative(btn);
+        return;
+      }
+    } catch (_) {}
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SR) startSpeechAPI(btn); else startRecorder(btn);
+  }
+  function startNative(btn) {
+    try {
+      var got = false;
+      window.__z16Speech = function (text, isFinal, kind) {
+        try {
+          if (kind === 'started') {
+            micState = 'recording'; micVisual(true);
+            toast(isEn() ? 'Listening… tap the mic again to stop' : 'Слушаю… нажмите на микрофон ещё раз, чтобы остановить', 2400);
+            return;
+          }
+          if (kind === 'error') {
+            if (!got) { toast(isEn() ? 'Native speech failed — falling back' : 'Нативная речь не сработала — включаю запасной способ', 3000); micState = 'idle'; micVisual(false); var SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (SR) startSpeechAPI(btn); else startRecorder(btn); }
+            return;
+          }
+          if (text && text.trim()) { got = true; fillInput(text.trim()); }
+          if (isFinal) {
+            micState = 'idle'; micVisual(false);
+            try { window.ZaiApp.stopNativeSpeech(); } catch (_) {}
+            if (!got) toast(isEn() ? 'Speech not recognized — try again' : 'Речь не распознана — попробуйте ещё раз');
+          }
+        } catch (_) {}
+      };
+      window.ZaiApp.startNativeSpeech();
+    } catch (_) {
+      var SR2 = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SR2) startSpeechAPI(btn); else startRecorder(btn);
+    }
   }
   function micVisual(on) {
     var b = micBtn();
@@ -383,7 +752,7 @@
     try {
       var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       recog = new SR();
-      recog.lang = 'ru-RU';
+      recog.lang = isEn() ? 'en-US' : 'ru-RU';
       recog.interimResults = true;
       recog.maxAlternatives = 1;
       var finalText = '';
@@ -398,11 +767,12 @@
       };
       recog.onend = function () {
         micState = 'idle'; micVisual(false);
-        if (!finalText && !$('footer textarea').value) toast('Речь не распознана — попробуйте ещё раз');
+        recog = null; /* без утечек */
+        if (!finalText && !$('footer textarea').value) toast(isEn() ? 'Speech not recognized — try again' : 'Речь не распознана — попробуйте ещё раз');
       };
-      recog.onerror = function () { micState = 'idle'; micVisual(false); };
+      recog.onerror = function () { micState = 'idle'; micVisual(false); recog = null; };
       micState = 'recording'; micVisual(true);
-      toast('Слушаю… нажмите на микрофон ещё раз, чтобы остановить', 2400);
+      toast(isEn() ? 'Listening… tap the mic again to stop' : 'Слушаю… нажмите на микрофон ещё раз, чтобы остановить', 2400);
       recog.start();
     } catch (_) { startRecorder(btn); }
   }
@@ -417,28 +787,35 @@
         mediaRec.onstop = function () {
           micState = 'idle'; micVisual(false);
           try { micStream.getTracks().forEach(function (t) { t.stop(); }); } catch (_) {}
+          try { micStream = null; } catch (_) {}
           var blob = new Blob(micChunks, { type: (mediaRec && mediaRec.mimeType) || 'audio/webm' });
+          micChunks = []; /* освобождаем память */
+          try { mediaRec = null; } catch (_) {}
           if (blob.size < 1200) return;
           transcribeBlob(blob);
         };
         mediaRec.start(400);
         micState = 'recording'; micVisual(true);
-        toast('Записываю… нажмите на микрофон ещё раз, чтобы остановить', 2400);
+        toast(isEn() ? 'Recording… tap the mic again to stop' : 'Записываю… нажмите на микрофон ещё раз, чтобы остановить', 2400);
       }).catch(function () {
-        toast('Нет доступа к микрофону. Разрешите его в настройках приложения/браузера.');
+        toast(isEn() ? 'No microphone access. Allow it in app/browser settings.' : 'Нет доступа к микрофону. Разрешите его в настройках приложения/браузера.');
       });
-    } catch (_) { toast('Микрофон недоступен в этом браузере'); }
+    } catch (_) { toast(isEn() ? 'Microphone is unavailable in this browser' : 'Микрофон недоступен в этом браузере'); }
   }
   function stopMic() {
+    try { if (window.ZaiApp && window.ZaiApp.stopNativeSpeech) window.ZaiApp.stopNativeSpeech(); } catch (_) {}
+    try { window.__z16Speech = null; } catch (_) {}
     try { recog && recog.stop && recog.stop(); } catch (_) {}
     try { mediaRec && mediaRec.state !== 'inactive' && mediaRec.stop(); } catch (_) {}
   }
   function transcribeBlob(blob) {
     if (!lastToken) {
-      toast('Распознавание речи работает после входа в аккаунт Z.ai (меню → Аккаунт). Гостям и браузеру без поддержки распознавания — недоступно.', 5200);
+      toast(isEn()
+        ? 'Speech recognition works after signing in to a Z.ai account (menu → Account).'
+        : 'Распознавание речи работает после входа в аккаунт Z.ai (меню → Аккаунт).', 5200);
       return;
     }
-    toast('Распознаю речь…', 9000);
+    toast(isEn() ? 'Transcribing…' : 'Распознаю речь…', 9000);
     var fd = new FormData();
     fd.append('file', blob, 'speech.webm');
     window.fetch(ZAI + '/api/v1/audio/transcriptions', {
@@ -447,17 +824,17 @@
       headers: { 'Authorization': 'Bearer ' + lastToken },
       body: fd
     }).then(function (res) {
-      if (!res.ok) { toast('Распознать не удалось (' + res.status + '). Введите текст вручную.'); return; }
+      if (!res.ok) { toast(isEn() ? 'Could not transcribe (' + res.status + '). Type it manually.' : 'Распознать не удалось (' + res.status + '). Введите текст вручную.'); return; }
       return res.json().catch(function () { return {}; }).then(function (d) {
         var t = d && (d.text || d.transcript || (d.data && d.text)) || '';
-        if (t) { fillInput(String(t).trim()); toast('Готово — текст в поле ввода'); }
-        else toast('Сервис не вернул текст');
+        if (t) { fillInput(String(t).trim()); toast(isEn() ? 'Done — text is in the input' : 'Готово — текст в поле ввода'); }
+        else toast(isEn() ? 'The service returned no text' : 'Сервис не вернул текст');
       });
-    }).catch(function () { toast('Распознавание недоступно — проверьте интернет'); });
+    }).catch(function () { toast(isEn() ? 'Transcription unavailable — check the internet' : 'Распознавание недоступно — проверьте интернет'); });
   }
 
-  /* ================= 6. подсказки: 16 вариантов + ротация ================= */
-  var POOL = [
+  /* ================= 6. подсказки: база 36, ротация со временем ================= */
+  var POOL_RU = [
     'Придумай 5 идей для поста в блог о путешествиях',
     'Объясни квантовую физику простыми словами',
     'Составь план тренировок на неделю дома без оборудования',
@@ -473,7 +850,65 @@
     'Придумай имя коту — вредному и рыжему',
     'Как экономить на продуктах без потери качества?',
     'Сделай краткий конспект теории относительности',
-    'Подбери 10 идей подарков другу до 2000 рублей'
+    'Подбери 10 идей подарков другу до 2000 рублей',
+    'Объясни разницу между HTTP и HTTPS на примере delivery',
+    'Составь чек-лист для поездки в горы на 5 дней',
+    'Придумай 7 заголовков для статьи про здоровый сон',
+    'Напиши функцию, которая проверяет палиндром — с тестами',
+    'Разбери плюсы и минусы удалённой работы',
+    'Составь недельное меню на 2000 рублей на одного',
+    'Объясни, как работают проценты по кредиту — с примером',
+    'Придумай сценарий короткого видео про утреннюю рутину',
+    'Сделай таблицу сравления iPhone и Android для пенсионера',
+    'Напиши поздравление коллеге с повышением — с юмором',
+    'Как начать бегать с нуля и не бросить — план на месяц',
+    'Придумай 10 названий для телеграм-канала про книги',
+    'Объясни ребёнку, почему небо голубое',
+    'Составь план изучения Python с нуля до первой работы',
+    'Помоги составить резюме для первой работы в IT',
+    'Придумай легенду для вымышленного города в горах',
+    'Напиши отзыв о кафе так, чтобы это было смешно',
+    'Составь список из 10 вопросов для интервью с предпринимателем',
+    'Объясни, что такое блокчейн, на примере тетрадки',
+    'Придумай 5 вариантов досуга для дождливых выходных дома'
+  ];
+  var POOL_EN = [
+    'Give me 5 blog post ideas about travel',
+    'Explain quantum physics in simple words',
+    'Make a 1-week home workout plan, no equipment',
+    'Write a polite vacation request email to my boss',
+    'What can I cook from chicken and rice for dinner?',
+    'Write a fairy tale about a dragon afraid of fire',
+    'How to learn English on my own in 3 months?',
+    'Come up with a slogan for a new coffee shop',
+    'Explain the difference between AI and a neural network',
+    'Plan a 3-day route around San Francisco',
+    'Run a mock job interview for a manager role',
+    'Write a Python script that sorts files in a folder',
+    'Suggest a name for a grumpy orange cat',
+    'How to save on groceries without losing quality?',
+    'Summarize the theory of relativity briefly',
+    'Suggest 10 gift ideas for a friend under $50',
+    'Explain HTTP vs HTTPS with a delivery-service analogy',
+    'Make a 5-day mountain trip checklist',
+    'Suggest 7 headlines for an article on healthy sleep',
+    'Write a palindrome checker function — with tests',
+    'List pros and cons of remote work',
+    'Plan a week of meals on a tight budget',
+    'Explain how loan interest works — with an example',
+    'Write a short-video script about a morning routine',
+    'Write a funny yet positive review of a cafe',
+    'How to start running and not quit — a 1-month plan',
+    'Suggest 10 names for a book-themed Telegram channel',
+    'Explain to a child why the sky is blue',
+    'Plan learning Python from zero to a first job',
+    'Help me write a resume for a first IT job',
+    'Invent a legend for a fictional mountain town',
+    'Explain blockchain using a notebook analogy',
+    'Suggest 5 rainy-weekend activities at home',
+    'Write 10 interview questions for an entrepreneur',
+    'Compare iPhone vs Android in a simple table',
+    'Brainstorm weekend project ideas for a developer'
   ];
   var curSet = [];
   function shuffle(a) {
@@ -521,91 +956,123 @@
         vibrate(6);
       }, true);
     }
-    if (!curSet.length) curSet = shuffle(POOL.slice()).slice(0, 8);
+    if (!curSet.length) curSet = shuffle((isEn() ? POOL_EN : POOL_RU).slice()).slice(0, 8);
     reapplySuggestions(grid);
   }
-  setInterval(function () {
+  function rotateSuggestions() {
     try {
       var g = findWelcomeGrid();
       if (g && g.__z16g && g.getBoundingClientRect().height > 0) {
-        curSet = shuffle(POOL.slice()).slice(0, 8);
+        curSet = shuffle((isEn() ? POOL_EN : POOL_RU).slice()).slice(0, 8);
         reapplySuggestions(g);
       }
     } catch (_) {}
-  }, 90000); /* ротация раз в 90 секунд */
+  }
+  setInterval(rotateSuggestions, 120000); /* ротация раз в 2 минуты */
+  try {
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) rotateSuggestions();
+    });
+  } catch (_) {}
 
-  /* ================= 7. плагины: «Загрузить ещё» ================= */
+  /* ================= 7. плагины: название кнопки, «Загрузить ещё», без дурацких ================= */
+  var pluginHideSel = null;
   function fixPlugins() {
     var hs = $$('h2');
     var h = null;
-    for (var i = 0; i < hs.length; i++) if (hs[i].textContent.trim() === 'Плагины') { h = hs[i]; break; }
+    for (var i = 0; i < hs.length; i++) if (hs[i].textContent.trim() === (isEn() ? 'Plugins' : 'Плагины')) { h = hs[i]; break; }
     if (!h) return;
     var root = h.closest('[role="dialog"]') || h.parentElement;
-    var installBtns = $$('button', root).filter(function (b) { return (b.textContent || '').trim() === 'Установить'; });
+    if (!root) return;
+    /* карточки «презентации/счёт/время» прячем в самом диалоге (страховка к фильтру fetch) */
+    if (!root.__z16hide) {
+      root.__z16hide = true;
+      setTimeout(function () {
+        try {
+          var cards = $$('button', root).map(function (b) {
+            return b.closest('div[class*="rounded-2xl"], div[class*="rounded-xl"]');
+          }).filter(function (c, i, arr) { return c && arr.indexOf(c) === i; });
+          cards.forEach(function (c) {
+            var t = (c.textContent || '');
+            if (PLUGIN_BLOCK.test(t)) c.style.display = 'none';
+          });
+        } catch (_) {}
+      }, 60);
+    }
+    var installBtns = $$('button', root).filter(function (b) { return (b.textContent || '').trim() === (isEn() ? 'Install' : 'Установить'); });
     if (installBtns.length < 7) { /* мало карточек — пагинация не нужна */
-      if (root.__z16p) { /* список изменился — сбросить */
-        root.__z16p = false;
-      }
+      if (root.__z16p) root.__z16p = false;
       return;
     }
     if (root.__z16p) return;
     root.__z16p = true;
-    var cards = installBtns.map(function (b) {
+    var cards2 = installBtns.map(function (b) {
       return b.closest('div[class*="rounded-2xl"], div[class*="rounded-xl"]') || b.parentElement;
-    }).filter(function (c, i, arr) { return c && arr.indexOf(c) === i; });
-    var container = cards[0] && cards[0].parentElement;
+    }).filter(function (c, i, arr) { return c && arr.indexOf(c) === i && c.style.display !== 'none'; });
+    var container = cards2[0] && cards2[0].parentElement;
     if (!container) return;
     var hidden = 0;
-    cards.forEach(function (c, i) {
+    cards2.forEach(function (c, i) {
       if (i >= 6) { c.style.display = 'none'; hidden++; }
     });
     if (!hidden) return;
     var more = document.createElement('button');
     more.type = 'button';
     more.className = 'z16-more';
-    more.textContent = 'Загрузить ещё (' + hidden + ')';
+    more.textContent = (isEn() ? 'Load more (' : 'Загрузить ещё (') + hidden + ')';
     more.addEventListener('click', function () {
-      cards.forEach(function (c) { c.style.display = ''; });
+      cards2.forEach(function (c) { c.style.display = ''; });
       more.remove();
       root.__z16p = false;
       vibrate(6);
     });
-    if (cards[6]) container.insertBefore(more, cards[6]); else container.appendChild(more);
+    if (cards2[6]) container.insertBefore(more, cards2[6]); else container.appendChild(more);
     /* при поиске показываем всё */
-    var search = $('input[placeholder*="Поиск"]', root);
+    var search = $('input[placeholder*="Поиск"], input[placeholder*="Search"]', root);
     if (search && !search.__z16s) {
       search.__z16s = true;
       search.addEventListener('input', function () {
-        if (search.value) { cards.forEach(function (c) { c.style.display = ''; }); var m = $('.z16-more', container); if (m) m.remove(); root.__z16p = false; }
+        if (search.value) { cards2.forEach(function (c) { c.style.display = ''; }); var m = $('.z16-more', container); if (m) m.remove(); root.__z16p = false; }
       });
     }
   }
 
-  /* ================= 8. вход: понятнее и безопаснее ================= */
+  /* ================= 8. вход: без гостя, понятнее и безопаснее ================= */
+  /* ГОСТЯ БОЛЬШЕ НЕТ: кнопка «Быстрый вход (гость Z.ai)» убирается, а гостевой
+     токен, снятый со страницы входа на полпути, отбрасывается (guard ниже). */
   function fixLogin() {
     var hs = $$('h2');
     var h = null;
-    for (var i = 0; i < hs.length; i++) if (hs[i].textContent.trim() === 'Аккаунт Z.ai') { h = hs[i]; break; }
+    for (var i = 0; i < hs.length; i++) if (hs[i].textContent.trim() === (isEn() ? 'Z.ai account' : 'Аккаунт Z.ai')) { h = hs[i]; break; }
     if (!h) return;
     var root = h.closest('[role="dialog"]') || h.parentElement;
+    if (!root) return;
     if (!root.__z16l) {
       root.__z16l = true;
+      /* 1) удаляем кнопку гостевого входа — смысла в нём нет */
       $$('button', root).forEach(function (b) {
         var t = (b.textContent || '').trim();
+        if (/Быстрый вход \(гость|guest/i.test(t)) { b.style.display = 'none'; }
         if (t.indexOf('Войти на сайте Z.ai') === 0) {
           allText(b).forEach(function (tn) {
             if (tn.nodeValue.indexOf('Войти на сайте Z.ai') !== -1) {
-              tn.nodeValue = tn.nodeValue.replace('Войти на сайте Z.ai (Google / email)', 'Войти через Z.ai — автоматически (в приложении)');
+              tn.nodeValue = tn.nodeValue.replace('Войти на сайте Z.ai (Google / email)',
+                isEn() ? 'Sign in via Z.ai — automatic (in the app)' : 'Войти через Z.ai — автоматически (в приложении)');
             }
           });
         }
       });
+      /* 2) пояснение про безопасность */
       var note = document.createElement('p');
       note.className = 'z16-note';
       note.style.cssText = 'margin-top:12px;font-size:11px;line-height:1.5;opacity:.55';
       note.textContent = window.ZaiApp
-        ? 'Вход проходит внутри приложения: откроется страница Z.ai, токен подхватится автоматически. Токен хранится только на этом устройстве и отправляется только серверам Z.ai.'
-        : 'Совет: в приложении ZaiChat вход происходит в один тап. Здесь же: войдите на chat.z.ai и вставьте токен. Токен хранится только на этом устройстве и отправляется только серверам Z.ai.';
+        ? (isEn()
+          ? 'Sign-in happens inside the app: the Z.ai page opens, the token is captured automatically. Guest mode is disabled. The token stays on this device and is sent only to Z.ai servers.'
+          : 'Вход проходит внутри приложения: откроется страница Z.ai, токен подхватится автоматически. Гостевого режима больше нет. Токен хранится только на этом устройстве и отправляется только серверам Z.ai.')
+        : (isEn()
+          ? 'Tip: in the ZaiChat app signing in takes one tap. Here: sign in on chat.z.ai and paste the token. The token stays on this device and is sent only to Z.ai servers.'
+          : 'Совет: в приложении ZaiChat вход происходит в один тап. Здесь же: войдите на chat.z.ai и вставьте токен. Токен хранится только на этом устройстве и отправляется только серверам Z.ai.');
       var acc = $$('button', root).filter(function (b) { return (b.textContent || '').indexOf('Как получить токен') === 0; })[0];
       var anchor = acc || $$('button', root).filter(function (b) { return (b.textContent || '').indexOf('Войти по токену') === 0; })[0];
       try {
@@ -614,22 +1081,252 @@
       } catch (_) { try { root.appendChild(note); } catch (_2) {} }
     }
   }
+  /* сайдбар: вместо «Гость» — честная подпись (в обе стороны при смене языка) */
+  function fixGuestLabel() {
+    var want = isEn() ? 'Not signed in' : 'Вход не выполнен';
+    $$('aside p, div[class*="bg-sidebar"] p').forEach(function (p) {
+      var t = p.textContent.trim();
+      if ((t === 'Гость' || t === 'Not signed in' || t === 'Вход не выполнен') && t !== want) {
+        p.textContent = want;
+      }
+    });
+  }
+  /* гвардия: гостевой токен с чужой страницы входа не считается входом */
+  function guardTokenBridge() {
+    try {
+      if (window.__z16TokGuard) return;
+      window.__z16TokGuard = true;
+      var wrap = function (fn) {
+        return function (token) {
+          try {
+            if (isGuestJwt(token)) {
+              toast(isEn() ? 'Guest token ignored — finish signing in to your account' : 'Гостевой токен проигнорирован — завершите вход в свой аккаунт', 4200);
+              return;
+            }
+          } catch (_) {}
+          return fn.apply(null, arguments);
+        };
+      };
+      if (typeof window.__onZaiToken === 'function') {
+        window.__onZaiToken = wrap(window.__onZaiToken);
+      } else {
+        var val = null;
+        try {
+          Object.defineProperty(window, '__onZaiToken', {
+            configurable: false,
+            get: function () { return val && wrap(val); },
+            set: function (v) { val = v; }
+          });
+        } catch (_) { window.__onZaiToken = null; }
+      }
+    } catch (_) {}
+  }
+
+  /* ================= 9. переименование чата ================= */
+  function renameChatApi(chatId, title) {
+    var doFallback = function () {
+      return window.fetch(ZAI + '/api/v1/chats/' + chatId, {
+        credentials: 'include', headers: { 'Authorization': 'Bearer ' + lastToken }
+      }).then(function (r) {
+        if (!r.ok) throw new Error('get ' + r.status);
+        return r.json();
+      }).then(function (chat) {
+        chat.title = title;
+        return window.fetch(ZAI + '/api/v1/chats/' + chatId, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + lastToken },
+          body: JSON.stringify(chat)
+        });
+      });
+    };
+    return window.fetch(ZAI + '/api/v1/chats/' + chatId, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + lastToken },
+      body: JSON.stringify({ title: title })
+    }).then(function (r) {
+      if (r.ok) return r;
+      return doFallback();
+    });
+  }
+
+  function showRenameDialog(currentTitle, onOk) {
+    try {
+      var old = $('.z16-rename-wrap');
+      if (old) old.remove();
+      var wrap = document.createElement('div');
+      wrap.className = 'z16-rename-wrap';
+      wrap.innerHTML = '<div class="z16-rename-card" role="dialog" aria-modal="true">' +
+        '<p class="z16-rename-title"></p>' +
+        '<input class="z16-rename-input" type="text" maxlength="120" />' +
+        '<div class="z16-rename-row">' +
+        '<button type="button" class="z16-rename-ok"></button>' +
+        '<button type="button" class="z16-rename-cancel"></button>' +
+        '</div></div>';
+      $('.z16-rename-title', wrap).textContent = isEn() ? 'Rename chat' : 'Переименовать чат';
+      $('.z16-rename-ok', wrap).textContent = isEn() ? 'Save' : 'Сохранить';
+      $('.z16-rename-cancel', wrap).textContent = isEn() ? 'Cancel' : 'Отмена';
+      var inp = $('.z16-rename-input', wrap);
+      inp.value = currentTitle || '';
+      document.body.appendChild(wrap);
+      setTimeout(function () { inp.focus(); inp.select(); }, 50);
+      var close = function () { try { wrap.remove(); } catch (_) {} };
+      $('.z16-rename-cancel', wrap).addEventListener('click', close);
+      wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
+      var ok = $('.z16-rename-ok', wrap);
+      ok.addEventListener('click', function () {
+        var v = inp.value.trim();
+        if (v) { close(); onOk(v); }
+      });
+      inp.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); ok.click(); }
+        if (e.key === 'Escape') close();
+      });
+    } catch (_) {}
+  }
+
+  function fixChatMenu() {
+    /* в «Меню чата» (у каждого чата в сайдбаре) добавляем «Переименовать» */
+    var menus = $$('[data-radix-popper-content-wrapper] [role="menu"], [data-radix-popper-content-wrapper] > div');
+    menus.forEach(function (m) {
+      if (m.__z16r) return;
+      var del = $$('button', m).filter(function (b) { return (b.textContent || '').trim() === (isEn() ? 'Delete' : 'Удалить'); })[0];
+      if (!del || !m.contains(del)) return;
+      m.__z16r = true;
+      var item = document.createElement('button');
+      item.type = 'button';
+      item.setAttribute('role', 'menuitem');
+      item.className = del.className;
+      item.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>' +
+        '<span></span>';
+      $('span', item).textContent = isEn() ? 'Rename' : 'Переименовать';
+      item.addEventListener('click', function (e) {
+        try {
+          e.preventDefault();
+          e.stopPropagation();
+          /* чат, которому принадлежит меню: ищем item сайдбара рядом с открытой позицией */
+          var itemEl = del.closest('[data-radix-popper-content-wrapper]');
+          var chatId = lastChat;
+          var curTitle = '';
+          /* приоритет: подсвеченный (активный) чат в сайдбаре */
+          var active = $('div[class*="bg-sidebar"] [class*="bg-sidebar-accent"], aside [class*="bg-sidebar-accent"]');
+          var host = active || null;
+          var label = '';
+          if (host) {
+            var p = host.querySelector('p, span');
+            label = (host.textContent || '').trim();
+          }
+          if (!label) label = (del.closest('div') && document.querySelector('main h1, main [class*="truncate"]') || {}).textContent || '';
+          showRenameDialog(label.replace(/Удалить|Delete|Переименовать|Rename/g, '').trim(), function (newTitle) {
+            onRenamed(chatId, newTitle, active);
+          });
+          try { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true })); } catch (_) {}
+        } catch (_) {}
+      }, true);
+      try { del.parentElement.insertBefore(item, del); } catch (_) { m.appendChild(item); }
+    });
+  }
+  function onRenamed(chatId, newTitle, sideItem) {
+    vibrate(8);
+    /* мгновенно обновляем подпись в сайдбаре */
+    try {
+      if (sideItem) {
+        var tn = sideItem.querySelector('span, p');
+        var target = null;
+        var sps = sideItem.querySelectorAll('span, p');
+        for (var i = 0; i < sps.length; i++) if (sps[i].textContent.trim().length > 1) { target = sps[i]; break; }
+        if (target) target.textContent = newTitle;
+      }
+    } catch (_) {}
+    if (chatId && lastToken) {
+      renameChatApi(chatId, newTitle).then(function () {
+        toast(isEn() ? 'Chat renamed ✅' : 'Чат переименован ✅');
+      }).catch(function () {
+        toast(isEn() ? 'Could not rename on the server — the title will update locally' : 'Сервер не смог переименовать — название изменено локально');
+      });
+    } else {
+      toast(isEn() ? 'Chat renamed locally' : 'Название изменено локально');
+    }
+  }
+
+  /* ================= 10. переключатель языка в настройках и в аккаунте ================= */
+  function addLangRow(root) {
+    if (!root || root.__z16lang) return;
+    root.__z16lang = true;
+    var row = document.createElement('div');
+    row.className = 'z16-lang-row';
+    row.innerHTML = '<p class="z16-lang-label"></p>' +
+      '<div class="z16-lang-seg">' +
+      '<button type="button" data-l="ru">Русский</button>' +
+      '<button type="button" data-l="en">English</button>' +
+      '</div>' +
+      '<p class="z16-lang-hint"></p>';
+    $('.z16-lang-label', row).textContent = isEn() ? 'Interface language' : 'Язык интерфейса';
+    $('.z16-lang-hint', row).textContent = isEn() ? 'Applies immediately' : 'Применяется сразу';
+    var mark = function () {
+      $$('button', row).forEach(function (b) {
+        var on = b.getAttribute('data-l') === lang;
+        b.className = 'z16-lang-btn' + (on ? ' z16-lang-on' : '');
+      });
+    };
+    mark();
+    row.addEventListener('click', function (e) {
+      var b = e.target && e.target.closest && e.target.closest('button[data-l]');
+      if (!b) return;
+      setLang(b.getAttribute('data-l'));
+      vibrate(6);
+      mark();
+      $('.z16-lang-label', row).textContent = isEn() ? 'Interface language' : 'Язык интерфейса';
+      $('.z16-lang-hint', row).textContent = isEn() ? 'Applies immediately' : 'Применяется сразу';
+    });
+    var anchor = root.querySelector('.space-y-5');
+    try {
+      if (anchor) anchor.appendChild(row); else root.appendChild(row);
+    } catch (_) { try { root.appendChild(row); } catch (_2) {} }
+  }
+  function fixSettingsLang() {
+    $$('h2').forEach(function (h) {
+      var t = h.textContent.trim();
+      if (t === (isEn() ? 'Settings' : 'Настройки') || t === (isEn() ? 'Z.ai account' : 'Аккаунт Z.ai')) {
+        addLangRow(h.closest('[role="dialog"]') || h.parentElement);
+      }
+    });
+  }
 
   /* ================= движок наблюдения ================= */
   var moT = null;
   function sweep() {
     try { fixThinkMenu(); } catch (_) {}
     try { fixThinkPill(); } catch (_) {}
+    try { forceMenusDown(); } catch (_) {}
     try { fixShareBtn(); } catch (_) {}
+    try { addTransferBtn(); } catch (_) {}
     try { fixMic(); } catch (_) {}
     try { fixSuggestions(); } catch (_) {}
     try { fixPlugins(); } catch (_) {}
     try { fixLogin(); } catch (_) {}
+    try { fixGuestLabel(); } catch (_) {}
+    try { fixChatMenu(); } catch (_) {}
+    try { fixSettingsLang(); } catch (_) {}
   }
-  function onMut() {
+  function onMut(muts) {
+    /* анти-мигание: меню обрабатываем немедленно, до отрисовки кадра */
+    for (var i = 0; i < muts.length; i++) {
+      var n = muts[i].target;
+      if (n && n.nodeType === 1) {
+        var el = n.matches && (n.matches('[data-radix-popper-content-wrapper]') || n.matches('[role="menu"]')) ? n : (n.closest && n.closest('[data-radix-popper-content-wrapper]'));
+        if (el) {
+          try { fixThinkMenu(el); } catch (_) {}
+          try { forceMenusDown(); } catch (_) {}
+          try { fixChatMenu(); } catch (_) {}
+        }
+      }
+    }
     if (moT) clearTimeout(moT);
     moT = setTimeout(sweep, 120);
   }
+  try { guardTokenBridge(); } catch (_) {}
   try {
     var mo = new MutationObserver(onMut);
     mo.observe(document.body || document.documentElement, { childList: true, subtree: true });
