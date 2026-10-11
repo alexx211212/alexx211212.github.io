@@ -1,15 +1,19 @@
-/*! ZaiChat v15.4 — слой улучшений поверх v15 (продолжение v15.3).
- *  Новое: рассуждения «Низкое/Среднее/Высокое» (быстрое/глубокое/ультра) без мигания языка,
- *  переключатель Русский/English в настройках, меню моделей и размышлений открываются ВНИЗ,
- *  подсказки: база 36, ротация; плагины: у кнопки есть название, убраны дурацкие
- *  (презентации/время/счёт), добавлены плагины в стиле GPT и Claude; перенос чата
- *  в другой чат-агент; переименование чата; guest убран полностью + гостевой токен
- *  больше не перехватывается на полпути входа; производительность и память.
+/*! ZaiChat v16 — слой исправлений по 6 жалобам владельца (поверх v15.4).
+ *  1) Меню и кнопки больше не съезжают: подсказок ровно 4 (без клонов растягивавших
+ *     сетку), кнопка «Перенести» не сжимает шапку (flex-shrink:0), меню позиционируются
+ *     точно по триггеру (aria-controls) и удерживаются rAF-циклом без прыжков.
+ *  2) «Рассуждения»: подпись уровня чинится МГНОВЕННО в кадре мутации — нативные
+ *     «Ультра/Глубокие» и дубли («ВысокоеВысокое») больше не мелькают.
+ *  3) Подсказки: ровно 4, ротация по 4 из большой базы.
+ *  4) Меню моделей открывается вниз от кнопки без «багованного» позиционирования.
+ *  5) Вход через Z.ai: приложение открывает нативную модалку входа Z.ai (гостя
+ *     стираем до загрузки, жмём «Sign in» за него), назад — возврат в приложение.
+ *  6) Иконка приложения: белая Z на тёмном фоне #323232 как на офф-сайте (в APK).
  *  Работает поверх приложения и не мешает ему: всё в try/catch. */
 (function () {
   'use strict';
   if (window.__z16x) return;
-  window.__z16x = { v: '15.4' };
+  window.__z16x = { v: '16' };
 
   /* ================= утилиты ================= */
   function $(s, r) { try { return (r || document).querySelector(s); } catch (_) { return null; } }
@@ -367,14 +371,35 @@
       } catch (_) {}
     }, 90);
   }
-  function fixThinkMenu(root) {
-    var wr = null;
-    if (root && root.querySelectorAll) {
-      wr = root.matches && root.matches('[data-radix-popper-content-wrapper]') ? root : $('[data-radix-popper-content-wrapper]', root);
-      if (!wr) wr = root.closest && root.closest('[data-radix-popper-content-wrapper]');
+  /* меню размышлений ищем строго по триггеру: aria-controls -> контент -> обёртка.
+     Никаких «первого попавшегося» поппера — раньше из-за этого меню съезжали. */
+  function wrapperForTrigger(trigLabel) {
+    var trig = $('button[aria-label="' + trigLabel + '"]');
+    if (!trig) return null;
+    var cid = trig.getAttribute('aria-controls');
+    var content = cid ? document.getElementById(cid) : null;
+    var wr = content ? content.closest('[data-radix-popper-content-wrapper]') : null;
+    if (!wr) {
+      /* запасной путь: открытый поппер рядом с триггером по подсказке текста */
+      var hint = trigLabel === 'Выбрать модель' ? /Флагман|GLM|Баланс|свой API|fast/i
+        : /Уровень размышлений|Лоу|Медиум|Хай|Выключить|Thinking level|Low|Medium|High|Off/i;
+      var wrs = $$('[data-radix-popper-content-wrapper]');
+      for (var i = 0; i < wrs.length; i++) {
+        var r = wrs[i].getBoundingClientRect();
+        if (r.width > 0 && r.height > 0 && hint.test(wrs[i].textContent || '')) { wr = wrs[i]; break; }
+      }
     }
-    if (!wr) wr = $('[data-radix-popper-content-wrapper]');
-    if (!wr) return;
+    if (!wr) return null;
+    var state = trig.getAttribute('data-state') || trig.getAttribute('aria-expanded') || '';
+    var open = state === 'open' || state === 'true';
+    var rect = wr.getBoundingClientRect();
+    if (!open || !(rect.width > 0)) return null;
+    return { trig: trig, wr: wr };
+  }
+  function fixThinkMenu() {
+    var pair = wrapperForTrigger('Уровень размышлений');
+    if (!pair) return;
+    var wr = pair.wr;
     var btns = $$('button', wr);
     var touched = false;
     btns.forEach(function (b) {
@@ -407,68 +432,165 @@
         }
       }
     });
-    if (touched) forceDown(wr, 'Уровень размышлений');
+    kickPin(); /* позицию держит rAF-пиннинг, не текстовые эвристики */
+  }
+  /* --- пилюля уровня: мгновенно, без дублей и без «неправильного названия» ---
+     Нативные метки пилюли: Ультра / Глубокие / Размышления (и Лоу/Медиум/Хай).
+     После выбора сайт сначала копирует подпись из нашего меню (правильную), потом
+     перерисовывает нативную (неправильную) — лечим в кадре мутации, а не по таймеру. */
+  var PILL_KNOWN = ['Ультра', 'Глубокие', 'Лоу', 'Медиум', 'Хай', 'Быстрые', 'Быстрое',
+    'Размышления', 'Высокое', 'Среднее', 'Низкое', 'High', 'Medium', 'Low', 'Think', 'Off', 'Выключить'];
+  function pillWant(t) {
+    if (isEn()) {
+      if (t === 'Ультра' || t === 'Высокое' || t === 'Хай') return 'High';
+      if (t === 'Глубокие' || t === 'Среднее' || t === 'Медиум') return 'Medium';
+      if (t === 'Лоу' || t === 'Низкое' || t === 'Быстрые' || t === 'Быстрое') return 'Low';
+      if (t === 'Размышления' || t === 'Think') return thinkChosen === 'low' ? 'Low' : 'Think';
+      if (t === 'Выключить') return 'Off';
+      return null;
+    }
+    if (t === 'Ультра' || t === 'High' || t === 'Хай') return 'Высокое';
+    if (t === 'Глубокие' || t === 'Medium' || t === 'Медиум') return 'Среднее';
+    if (t === 'Лоу' || t === 'Low' || t === 'Быстрые' || t === 'Быстрое') return 'Низкое';
+    if (t === 'Размышления' || t === 'Think') {
+      if (thinkChosen === 'low') return 'Низкое';
+      if (thinkChosen === 'medium') return 'Среднее';
+      if (thinkChosen === 'high') return 'Высокое';
+      return 'Размышления';
+    }
+    return null;
+  }
+  function splitDoubled(t) {
+    for (var i = 0; i < PILL_KNOWN.length; i++) {
+      var k = PILL_KNOWN[i];
+      if (t.length === k.length * 2 && t.slice(0, k.length) === k && t.slice(k.length) === k) return k;
+    }
+    return null;
   }
   function fixThinkPill() {
     var b = $('footer button[aria-label="Уровень размышлений"]');
     if (!b) return;
     var t = (b.textContent || '').trim();
-    var want = null;
-    if (isEn()) {
-      /* и нативные RU, и наши RU-подписи → EN */
-      if (t === 'Ультра' || t === 'Высокое') want = 'High';
-      else if (t === 'Глубокие' || t === 'Среднее') want = 'Medium';
-      else if (t === 'Низкое') want = 'Low';
-      else if (t === 'Размышления') want = thinkChosen === 'low' ? 'Low' : 'Think';
-    } else {
-      if (t === 'Ультра' || t === 'High') want = 'Высокое';
-      else if (t === 'Глубокие' || t === 'Medium') want = 'Среднее';
-      else if (t === 'Низкое') want = 'Низкое';
-      else if (t === 'Think' || t === 'Low' || t === 'High' || t === 'Medium') want = 'Размышления';
-      else if (t === 'Размышления' && thinkChosen === 'low') want = 'Низкое';
+    if (!t) return;
+    var half = splitDoubled(t); /* «ВысокоеВысокое» — подпись прописана 2 раза */
+    var nodes = allText(b).filter(function (tn) { return tn.nodeValue.trim(); });
+    var spans = $$('span', b).filter(function (sp) { return sp.textContent.trim(); });
+    var placed = false;
+    if (half) {
+      var wantD = pillWant(half) || half;
+      nodes.forEach(function (tn) {
+        var v = tn.nodeValue.trim();
+        if (v === half || v === t) {
+          if (!placed) { tn.nodeValue = wantD; placed = true; } else tn.nodeValue = '';
+        }
+      });
+      if (!placed) spans.forEach(function (sp) {
+        var v = sp.textContent.trim();
+        if (v === half || v === t) {
+          if (!placed) { sp.textContent = wantD; placed = true; } else sp.textContent = '';
+        }
+      });
+      return;
     }
+    var want = pillWant(t);
     if (!want || want === t) return;
-    directText(b).forEach(function (tn) {
-      if (tn.nodeValue.trim() === t) tn.nodeValue = want;
+    nodes.forEach(function (tn) {
+      if (tn.nodeValue.trim() === t) {
+        if (!placed) { tn.nodeValue = want; placed = true; } else tn.nodeValue = '';
+      }
     });
-    $$('span', b).forEach(function (sp) {
-      if (sp.textContent.trim() === t) sp.textContent = want;
+    if (!placed) spans.forEach(function (sp) {
+      if (sp.textContent.trim() === t) {
+        if (!placed) { sp.textContent = want; placed = true; } else sp.textContent = '';
+      }
     });
   }
 
-  /* --- меню моделей и размышлений: открываются ВНИЗ, а не за верхний край --- */
-  function forceDown(wr, triggerLabel) {
+  /* --- меню моделей и размышлений: строго ВНИЗ от триггера, без прыжков и «багованности» ---
+     Раньше позиция ставилась один раз по текстовой эвристике: меню успевало открыться
+     в кривом месте и потом «прыгало». Теперь: триггер -> aria-controls -> его контент,
+     позиция применяется rAF-циклом каждый кадр, пока меню открыто; при закрытии
+     наши inline-стили снимаются, и Radix сам решает, как рисовать меню в следующий раз. */
+  function pinPair(trigLabel, textHint) {
+    var trig = $('button[aria-label="' + trigLabel + '"]');
+    if (!trig) return null;
+    var cid = trig.getAttribute('aria-controls');
+    var content = cid ? document.getElementById(cid) : null;
+    var wr = content ? content.closest('[data-radix-popper-content-wrapper]') : null;
+    if (!wr && textHint) {
+      var wrs = $$('[data-radix-popper-content-wrapper]');
+      for (var i = 0; i < wrs.length; i++) {
+        var rc = wrs[i].getBoundingClientRect();
+        if (rc.width > 0 && textHint.test(wrs[i].textContent || '')) { wr = wrs[i]; break; }
+      }
+    }
+    if (!wr) return null;
+    return { trig: trig, wr: wr };
+  }
+  function isOpen(trig) {
+    var state = trig.getAttribute('data-state') || trig.getAttribute('aria-expanded') || '';
+    return state === 'open' || state === 'true';
+  }
+  function applyBelow(pair) {
     try {
-      var trig = $('button[aria-label="' + triggerLabel + '"]');
-      if (!trig) return;
-      var r = trig.getBoundingClientRect();
+      var r = pair.trig.getBoundingClientRect();
       var vw = window.innerWidth, vh = window.innerHeight;
-      var cw = wr.offsetWidth || 260, ch = wr.offsetHeight || 200;
+      var wr = pair.wr;
+      var cw = wr.offsetWidth || 260;
       var left = Math.round(Math.max(8, Math.min(r.left, vw - cw - 8)));
       var top = Math.round(r.bottom + 8);
       var maxH = vh - top - 12;
-      if (maxH < 140) { /* совсем низко — прижмём к низу экрана с прокруткой */
+      if (maxH < 140) { /* совсем низко (клавиатура) — прижмём к низу экрана с прокруткой */
         maxH = Math.max(140, Math.round(vh * 0.45));
         top = vh - maxH - 8;
       }
-      wr.style.setProperty('top', top + 'px', 'important');
-      wr.style.setProperty('left', left + 'px', 'important');
-      wr.style.setProperty('transform', 'none', 'important');
-      wr.style.setProperty('max-height', maxH + 'px', 'important');
-      wr.style.setProperty('overflow-y', 'auto', 'important');
+      var st = wr.style;
+      st.setProperty('top', top + 'px', 'important');
+      st.setProperty('left', left + 'px', 'important');
+      st.setProperty('transform', 'none', 'important');
+      st.setProperty('max-height', maxH + 'px', 'important');
+      st.setProperty('overflow-y', 'auto', 'important');
+      wr.classList.add('z16-pinned');
     } catch (_) {}
   }
-  function forceMenusDown() {
-    var wrs = $$('[data-radix-popper-content-wrapper]');
-    for (var i = 0; i < wrs.length; i++) {
-      var wr = wrs[i];
-      if (!wr.getBoundingClientRect().height) continue;
-      var txt = wr.textContent || '';
-      if ($('button[aria-label="Уровень размышлений"]') && /Уровень размышлений|Thinking level|Лоу|Медиум|Хай|Low|Medium|High|Выключить|Off/.test(txt)) {
-        forceDown(wr, 'Уровень размышлений');
-      } else if ($('button[aria-label="Выбрать модель"]') && /Флагман|GLM|Баланс|свой API|fast/i.test(txt)) {
-        forceDown(wr, 'Выбрать модель');
+  function releasePins() {
+    $$('.z16-pinned').forEach(function (wr) {
+      wr.classList.remove('z16-pinned');
+      ['top', 'left', 'transform', 'max-height', 'overflow-y'].forEach(function (p) {
+        try { wr.style.removeProperty(p); } catch (_) {}
+      });
+    });
+  }
+  var pinRaf = 0, pinIdle = 0;
+  function pinFrame() {
+    pinRaf = 0;
+    var any = false;
+    try {
+      var modelPair = pinPair('Выбрать модель', /Флагман|GLM|Баланс|свой API|fast/i);
+      if (modelPair && isOpen(modelPair.trig) && modelPair.wr.getBoundingClientRect().width > 0) {
+        applyBelow(modelPair);
+        any = true;
       }
+      var thinkPair = pinPair('Уровень размышлений', null);
+      if (thinkPair && isOpen(thinkPair.trig) && thinkPair.wr.getBoundingClientRect().width > 0) {
+        applyBelow(thinkPair);
+        any = true;
+      }
+    } catch (_) {}
+    if (any) {
+      pinIdle = 0;
+      pinRaf = requestAnimationFrame(pinFrame);
+    } else if (pinIdle < 8) { /* пара кадров на случай, когда состояние ещё обновляется */
+      pinIdle++;
+      pinRaf = requestAnimationFrame(pinFrame);
+    } else {
+      releasePins();
+    }
+  }
+  function kickPin() {
+    if (!pinRaf) {
+      pinIdle = 0;
+      pinRaf = requestAnimationFrame(pinFrame);
     }
   }
 
@@ -561,7 +683,7 @@
     b.className = share.className || '';
     b.setAttribute('aria-label', isEn() ? 'Continue in new chat' : 'Перенести в новый чат');
     b.title = isEn() ? 'Continue in new chat' : 'Перенести в новый чат';
-    b.style.cssText = 'display:flex;align-items:center;justify-content:center';
+    b.style.cssText = 'display:flex;align-items:center;justify-content:center;flex-shrink:0;width:36px;height:36px;padding:0'; /* не сжимает шапку */
     b.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4c5 0 7 2.2 7 6 0 4.6-2.6 7.8-8.1 7.8H9"/><path d="m12 14-4 4 4 4"/><path d="M9 14H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1"/></svg>';
     b.addEventListener('click', function (e) {
       e.preventDefault();
@@ -926,12 +1048,17 @@
   }
   function reapplySuggestions(grid) {
     var bs = $$('button', grid);
-    for (var i = 0; i < bs.length && i < curSet.length; i++) {
-      var b = bs[i], want = curSet[i];
-      if (b.getAttribute('data-z16t') !== want) {
-        b.setAttribute('data-z16t', want);
-        var sp = $('.line-clamp-2', b);
-        if (sp && sp.textContent !== want) sp.textContent = want;
+    for (var i = 0; i < bs.length; i++) {
+      var b = bs[i];
+      if (i < curSet.length) {
+        var want = curSet[i];
+        if (b.getAttribute('data-z16t') !== want) {
+          b.setAttribute('data-z16t', want);
+          var sp = $('.line-clamp-2', b);
+          if (sp && sp.textContent !== want) sp.textContent = want;
+        }
+      } else if (b.getAttribute('data-z16t')) {
+        b.removeAttribute('data-z16t'); /* лишних кнопок больше нет — но на всякий случай */
       }
     }
   }
@@ -940,11 +1067,8 @@
     if (!grid) return;
     if (!grid.__z16g) {
       grid.__z16g = true;
-      var orig = $$('button', grid);
-      for (var k = orig.length; k < 8; k++) {
-        var c = orig[k % orig.length].cloneNode(true);
-        grid.appendChild(c);
-      }
+      /* КЛОНОВ БОЛЬШЕ НЕТ: ровно 4 нативные подсказки — сетка не растягивается,
+         как раньше (8 клонов = «съезжают менюшки и кнопки»), и подсказок ровно 4. */
       grid.addEventListener('click', function (e) {
         var b = e.target && e.target.closest && e.target.closest('button');
         if (!b || !grid.contains(b)) return;
@@ -956,14 +1080,14 @@
         vibrate(6);
       }, true);
     }
-    if (!curSet.length) curSet = shuffle((isEn() ? POOL_EN : POOL_RU).slice()).slice(0, 8);
+    if (!curSet.length) curSet = shuffle((isEn() ? POOL_EN : POOL_RU).slice()).slice(0, 4);
     reapplySuggestions(grid);
   }
   function rotateSuggestions() {
     try {
       var g = findWelcomeGrid();
       if (g && g.__z16g && g.getBoundingClientRect().height > 0) {
-        curSet = shuffle((isEn() ? POOL_EN : POOL_RU).slice()).slice(0, 8);
+        curSet = shuffle((isEn() ? POOL_EN : POOL_RU).slice()).slice(0, 4);
         reapplySuggestions(g);
       }
     } catch (_) {}
@@ -1299,7 +1423,7 @@
   function sweep() {
     try { fixThinkMenu(); } catch (_) {}
     try { fixThinkPill(); } catch (_) {}
-    try { forceMenusDown(); } catch (_) {}
+    try { kickPin(); } catch (_) {}
     try { fixShareBtn(); } catch (_) {}
     try { addTransferBtn(); } catch (_) {}
     try { fixMic(); } catch (_) {}
@@ -1311,15 +1435,19 @@
     try { fixSettingsLang(); } catch (_) {}
   }
   function onMut(muts) {
-    /* анти-мигание: меню обрабатываем немедленно, до отрисовки кадра */
+    /* анти-мигание: меню, пилюлю и позиции обрабатываем немедленно, до отрисовки кадра */
     for (var i = 0; i < muts.length; i++) {
       var n = muts[i].target;
       if (n && n.nodeType === 1) {
         var el = n.matches && (n.matches('[data-radix-popper-content-wrapper]') || n.matches('[role="menu"]')) ? n : (n.closest && n.closest('[data-radix-popper-content-wrapper]'));
         if (el) {
-          try { fixThinkMenu(el); } catch (_) {}
-          try { forceMenusDown(); } catch (_) {}
+          try { fixThinkMenu(); } catch (_) {}
+          try { kickPin(); } catch (_) {}
           try { fixChatMenu(); } catch (_) {}
+        }
+        var isFooter = n.matches && n.matches('footer button') || (n.closest && n.closest('footer button[aria-label="Уровень размышлений"]'));
+        if (isFooter) {
+          try { fixThinkPill(); } catch (_) {}
         }
       }
     }

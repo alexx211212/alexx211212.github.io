@@ -5,7 +5,7 @@
  *  - Статика (icons, manifest): cache-first
  *  - /api/*: network-only (стриминг не кэшируем)
  */
-const VERSION = 'v15.4';
+const VERSION = 'v16';
 const SHELL_CACHE = `shell-${VERSION}`;
 const ASSET_CACHE = `assets-${VERSION}`;
 const OFFLINE_URL = '/offline.html';
