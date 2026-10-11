@@ -26,15 +26,15 @@ export function isNetworkError(e) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-/* Прогрев WAF-защиты chat.z.ai (Aliyun): без cookies acw_tc POST-запросы
-   блокируются с 405 («сервер не отвечает»). Лёгкий GET с credentials:'include'
-   получает и сохраняет cookies — после этого POST проходит. */
+/* Прогрев WAF-защиты chat.z.ai (Aliyun): без cookies acw_tc POST к /v2/chat/completions
+   блокируется с 405 («сервер не отвечает»). mode:'no-cors' + credentials:'include'
+   отправляет запрос и СОХРАНЯЕТ cookies, не ломаясь на CORS (GET-эндпоинты отвечают ACAO:*). */
 let warmed = false;
 export async function warmup(force) {
   if (warmed && !force) return;
   warmed = true;
   try {
-    await fetch(ZAI_BASE + '/api/v1/auths/', { credentials: 'include', headers: headers(null) });
+    await fetch(ZAI_BASE + '/api/v1/auths/', { mode: 'no-cors', credentials: 'include' });
   } catch (_) {}
 }
 
@@ -46,7 +46,9 @@ export async function zaiFetch(path, opts = {}, token = null, retries = 2) {
     try {
       ctrl = new AbortController();
       timer = setTimeout(() => ctrl.abort('timeout'), opts.timeoutMs || 25000);
-      const res = await fetch(ZAI_BASE + path, { ...opts, credentials: 'include', headers: headers(token, opts.headers), signal: opts.signal || ctrl.signal });
+      /* БЕЗ credentials: GET-эндпоинты отвечают Access-Control-Allow-Origin:* —
+         с 'include' браузер бы заблокировал ответы (Failed to fetch). */
+      const res = await fetch(ZAI_BASE + path, { ...opts, headers: headers(token, opts.headers), signal: opts.signal || ctrl.signal });
       if (res.status === 429 || res.status === 503 || res.status === 502) {
         const e = new Error('overloaded'); e.overloaded = true; e.status = res.status;
         if (attempt < retries) { await sleep(1200 * (attempt + 1) * (attempt + 1)); continue; }
@@ -203,11 +205,13 @@ export function zaiStream({ token, model, messages, files, thinking, image, sear
 
   (async () => {
     let attempt = 0, gotText = false, failMsg = null;
-    await warmup(); // прогрев: cookies WAF, чтобы POST не получил 405
+    let useCreds = false; // WAF Aliyun непредсказуем: чередуем omit/include — какой режим прошёл, тот и используем
+    await warmup();
     while (attempt <= 2) {
       try {
         const res = await fetch(ZAI_BASE + '/api/v2/chat/completions', {
-          method: 'POST', signal: ctrl.signal, credentials: 'include',
+          method: 'POST', signal: ctrl.signal,
+          ...(useCreds ? { credentials: 'include' } : { credentials: 'omit' }),
           headers: headers(token, { 'Content-Type': 'application/json' }),
           body: JSON.stringify(body)
         });
@@ -221,9 +225,10 @@ export function zaiStream({ token, model, messages, files, thinking, image, sear
           if (res.status === 401) detail = 'Сессия Z.ai истекла. Войдите заново в настройках.';
           if (res.status === 403 && detail === 'Z.ai ответил ошибкой 403') detail = 'Модель недоступна для вашего уровня аккаунта.';
           if (res.status === 429 || res.status === 503 || res.status === 502) overloaded = true;
-          if (res.status === 405) { // WAF: нет cookies — прогреваем и повторяем (само чинится)
+          if (res.status === 405) { // WAF заблокировал — переключаем режим credentials и повторяем (само чинится)
             if (attempt < 2 && !ctrl.signal.aborted) {
               cb.onStatus && cb.onStatus('Защита сервера сработала — переподключаюсь (попытка ' + (attempt + 1) + '/3)…');
+              useCreds = !useCreds;
               await warmup(true); await sleep(700); attempt++; continue;
             }
           }
@@ -295,6 +300,7 @@ export function zaiStream({ token, model, messages, files, thinking, image, sear
         finished = true; cb.onDone && cb.onDone(); return;
       } catch (e) {
         if (ctrl.signal.aborted) { cb.onDone && cb.onDone(); return; }
+        if (useCreds) { useCreds = false; attempt++; continue; } // CORS-блок с include — сразу пробуем omit
         if (attempt < 2) {
           cb.onStatus && cb.onStatus('Соединение прервалось — восстанавливаю (попытка ' + (attempt + 1) + '/3)…');
           await sleep(1500 + attempt * 3000); attempt++; continue;

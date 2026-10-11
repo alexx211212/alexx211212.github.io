@@ -1,8 +1,8 @@
 /* ZaiChat v16 — Service Worker: офлайн-оболочка, сеть-первая для данных */
-const VERSION = 'v16.1';
+const VERSION = 'v16.3';
 const SHELL = [
-  '/', '/index.html', '/css/app.css?v=16.1',
-  '/js/app.js?v=16.1', '/js/api.js', '/js/store.js', '/js/md.js', '/js/ppt.js', '/js/plugins.js', '/js/chat.js',
+  '/', '/index.html', '/css/app.css?v=16.3',
+  '/js/app.js?v=16.3', '/js/api.js', '/js/store.js', '/js/md.js', '/js/ppt.js', '/js/plugins.js', '/js/chat.js',
   '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png', '/offline.html'
 ];
 
