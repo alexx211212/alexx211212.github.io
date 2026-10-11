@@ -9,7 +9,7 @@
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/icons/icon-192.png">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
-<link rel="stylesheet" href="/css/app.css?v=16.3">
+<link rel="stylesheet" href="/css/app.css?v=16.4">
 </head>
 <body>
 <div id="app" class="app">
@@ -215,6 +215,11 @@
 </div>
 
 <noscript>Для работы Z.ai включите JavaScript.</noscript>
-<script type="module" src="/js/app.js?v=16.3"></script>
+<script>
+  // Когда Service Worker обновился и взял управление — перезагружаем страницу ОДИН раз,
+  // чтобы посетитель сразу получил свежий код (иначе после деплоя возможен один битый заход).
+  (function(){var r=false;if('serviceWorker' in navigator){navigator.serviceWorker.addEventListener('controllerchange',function(){if(r)return;r=true;location.reload();});}})();
+</script>
+<script type="module" src="/js/app.js?v=16.4"></script>
 </body>
 </html>
