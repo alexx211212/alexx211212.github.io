@@ -1,21 +1,23 @@
-/*! ZaiChat v19 — слой исправлений поверх v15.4/v16–v18.
- *  Новое в v19 (по жалобам владельца):
- *  1) Уровни размышлений называются «Быстрое / Глубокое / Ультра» — и в меню,
- *     и на пилюле после выбора (раньше меню писало Низкое/Среднее/Высокое,
- *     а пилюля прыгала на Высокое/Среднее).
- *  2) Панель ввода крупнее (поле ~2 строки вместо одной), текст ВСЕХ кнопок
- *     одного размера (12px) — раньше поиск/плагины были 9px, остальные 12–16px.
- *  3) Подменю «Другие модели»: открывается СРАЗУ вниз под пунктом (без
- *     «сначала вправо, потом вниз» — сдвиг теперь в том же кадре, до отрисовки),
- *     повторный тап по «Другие модели» сворачивает подменю обратно.
- *  4) Вход: гостевой токен отсекается на всех путях (кнопка гостя скрыта,
- *     мост токена и опрос localStorage игнорируют роль guest).
- *  Сохранено из v16–v18: 4 подсказки, «Перенести», меню вниз, автономный APK.
- *  Работает поверх приложения и не мешает ему: всё в try/catch. */
+/*! ZaiChat v20 — слой исправлений поверх v15.4/v16–v19.
+ *  Новое в v20 (по жалобам владельца):
+ *  1) АНТИ-МИГАНИЕ: всплывающие меню (размышления, модели, чат-меню) и подсказки
+ *     появляются уже ГОТОВЫМИ — первый кадр скрыт, переименование и позиция
+ *     применяются до показа. Нативные «Лоу/Медиум/Хай» больше не видны.
+ *  2) «Выключить» в размышлениях сразу возвращает пилюлю «Размышления»
+ *     (раньше иногда оставалось «Быстрое»).
+ *  3) Подсказки сменяются раз в НЕСКОЛЬКО ЧАСОВ и сохраняются между запусками;
+ *     при переключении чат↔агент — без мигания.
+ *  4) Плагины: кнопка «Ещё» — карточки показываются постепенно; в каталоге
+ *     больше плагинов.
+ *  5) Боковое меню открывается быстрее (короче анимации, легче обработка мутаций).
+ *  6) ЭКСПЕРИМЕНТ: «Локальные ИИ» в боковом меню — чат без интернета на маленьких
+ *     моделях (выбор по объёму ОЗУ, скачивание, качество/скорость не гарантированы).
+ *  Сохранено из v16–v19: Быстрое/Глубокое/Ультра, крупная панель ввода, меню вниз,
+ *  «Поделиться»/«Перенести», вход без гостя, автономный APK. Всё в try/catch. */
 (function () {
   'use strict';
   if (window.__z16x) return;
-  window.__z16x = { v: '19' };
+  window.__z16x = { v: '20' };
 
   /* ================= утилиты ================= */
   function $(s, r) { try { return (r || document).querySelector(s); } catch (_) { return null; } }
@@ -363,6 +365,11 @@
   var PILL_EN = { 'Ультра': 'High', 'Глубокие': 'Medium', 'Размышления': 'Think' };
   var thinkChosen = '';
   try { thinkChosen = sessionStorage.getItem('z16think') || ''; } catch (_) {}
+  /* v20: включены ли размышления. Без этого после «Выключить» пилюля иногда
+     оставалась «Быстрое» — нативно у low и off одинаковая подпись «Размышления»,
+     React не перерисовывает её, и наша переименованная копия оставалась. */
+  var thinkOn = '';
+  try { thinkOn = sessionStorage.getItem('z16thinkon') || ''; } catch (_) {}
 
   function closeThink() {
     try { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true })); } catch (_) {}
@@ -400,8 +407,20 @@
   }
   function fixThinkMenu() {
     var pair = wrapperForTrigger('Уровень размышлений');
-    if (!pair) return;
-    var wr = pair.wr;
+    var wr = pair ? pair.wr : null;
+    if (!wr) {
+      /* v20: запасной путь в первый кадр — у свежесмонтированного поппера
+         aria-связка с триггером может ещё не встать. Ищем открытое меню по
+         нативным подписям размышлений (модели их не содержат). */
+      var wrs = $$('[data-radix-popper-content-wrapper]');
+      for (var w = 0; w < wrs.length; w++) {
+        var wc = wrs[w];
+        if (!(wc.getBoundingClientRect().width > 0) && wc.style.visibility !== 'hidden') continue;
+        var wt = wc.textContent || '';
+        if (/(^|\s)(Лоу|Медиум|Хай)(\s|$)/.test(wt) && wt.indexOf('Флагман') === -1) { wr = wc; break; }
+      }
+      if (!wr) return;
+    }
     var btns = $$('button', wr);
     var touched = false;
     btns.forEach(function (b) {
@@ -413,8 +432,18 @@
           if (!b.__z16w) {
             b.__z16w = true;
             b.addEventListener('click', function () {
-              try { thinkChosen = ['low', 'medium', 'high', 'off'][i]; sessionStorage.setItem('z16think', thinkChosen); } catch (_) {}
+              try {
+                thinkChosen = ['low', 'medium', 'high', 'off'][i];
+                thinkOn = thinkChosen === 'off' ? '0' : '1';
+                sessionStorage.setItem('z16think', thinkChosen);
+                sessionStorage.setItem('z16thinkon', thinkOn);
+              } catch (_) {}
               vibrate(8);
+              /* v20: «Выключить» — сразу возвращаем пилюлю «Размышления», не ждём
+                 сайт: нативная подпись у low/off одна, React мог не перерисовать */
+              if (thinkChosen === 'off') {
+                setTimeout(function () { try { setPillText(isEn() ? 'Off' : 'Размышления'); } catch (_) {} }, 60);
+              }
               setTimeout(closeThink, 140); /* меню закрывается само после выбора */
             }, true);
           }
@@ -445,15 +474,19 @@
   /* v19: пилюля показывает то же, что выбрали в меню: Быстрое/Глубокое/Ультра.
      «Размышления» в выключенном состоянии остаётся как есть (нативная подпись off). */
   function pillWant(t) {
+    /* v20: размышления выключены — наши старые подписи возвращаем в нативные */
+    if (thinkOn === '0' && (t === 'Быстрое' || t === 'Глубокое' || t === 'Ультра')) return 'Размышления';
+    if (thinkOn === '0' && (t === 'Fast' || t === 'Deep' || t === 'Ultra')) return 'Think';
     if (isEn()) {
       if (t === 'Ультра' || t === 'Высокое' || t === 'Хай') return 'Ultra';
       if (t === 'Глубокие' || t === 'Глубокое' || t === 'Среднее' || t === 'Медиум') return 'Deep';
       if (t === 'Лоу' || t === 'Низкое' || t === 'Быстрые' || t === 'Быстрое') return 'Fast';
       if (t === 'Размышления' || t === 'Think') {
+        if (thinkOn !== '1') return null; /* выключено — нативную подпись не трогаем */
         if (thinkChosen === 'low') return 'Fast';
         if (thinkChosen === 'medium') return 'Deep';
         if (thinkChosen === 'high') return 'Ultra';
-        return 'Think';
+        return null;
       }
       if (t === 'Выключить') return 'Off';
       return null;
@@ -462,10 +495,11 @@
     if (t === 'Глубокие' || t === 'Medium' || t === 'Среднее' || t === 'Медиум') return 'Глубокое';
     if (t === 'Лоу' || t === 'Low' || t === 'Низкое' || t === 'Быстрые') return 'Быстрое';
     if (t === 'Размышления' || t === 'Think') {
+      if (thinkOn !== '1') return null; /* выключено — нативную подпись не трогаем */
       if (thinkChosen === 'low') return 'Быстрое';
       if (thinkChosen === 'medium') return 'Глубокое';
       if (thinkChosen === 'high') return 'Ультра';
-      return 'Размышления';
+      return null;
     }
     return null;
   }
@@ -513,6 +547,59 @@
         if (!placed) { sp.textContent = want; placed = true; } else sp.textContent = '';
       }
     });
+  }
+  /* v20: прямая запись текста пилюли (для «Выключить» и стражи переключателя) */
+  function setPillText(want) {
+    var b = $('footer button[aria-label="Уровень размышлений"]');
+    if (!b) return;
+    var cur = (b.textContent || '').trim();
+    if (cur === want || splitDoubled(cur)) {
+      var dbl = splitDoubled(cur);
+      if (!dbl && cur === want) return;
+      if (dbl && dbl === want) { fixThinkPill(); return; }
+    }
+    var nodes = allText(b).filter(function (tn) { return tn.nodeValue.trim(); });
+    var placed = false;
+    nodes.forEach(function (tn) {
+      if (!placed) { tn.nodeValue = want; placed = true; } else tn.nodeValue = '';
+    });
+    if (!placed) {
+      var spans = $$('span', b).filter(function (sp) { return sp.textContent.trim(); });
+      spans.forEach(function (sp, i) { sp.textContent = i === 0 ? want : ''; });
+    }
+  }
+  /* v20: страж пилюли — если уровень переключили НЕ через меню (тап по самой
+     пилюле), синхронизируем thinkOn. Нативно low и off обе подписи «Размышления»,
+     поэтому следим за переходами уровень↔«Размышления». */
+  function pillToggleGuard() {
+    if (window.__z16pillG) return;
+    window.__z16pillG = true;
+    document.addEventListener('click', function (e) {
+      try {
+        var b = e.target && e.target.closest && e.target.closest('footer button[aria-label="Уровень размышлений"]');
+        if (!b) return;
+        var before = (b.textContent || '').trim();
+        setTimeout(function () {
+          try {
+            var after = (b.textContent || '').trim();
+            if (!after || after === before) return;
+            var LV = ['Ультра', 'Глубокое', 'Быстрое', 'Глубокие', 'Быстрые', 'Высокое', 'Среднее', 'Низкое', 'Ultra', 'Deep', 'Fast', 'High', 'Medium', 'Low'];
+            var offTxt = (isEn() ? ['Think', 'Off'] : ['Размышления', 'Выключить']);
+            var wasLvl = LV.indexOf(before) !== -1 || !!splitDoubled(before);
+            var nowLvl = LV.indexOf(after) !== -1 || !!splitDoubled(after);
+            if (wasLvl && offTxt.indexOf(after) !== -1) {
+              thinkOn = '0';
+              try { sessionStorage.setItem('z16thinkon', '0'); } catch (_) {}
+              fixThinkPill();
+            } else if (offTxt.indexOf(before) !== -1 && nowLvl) {
+              thinkOn = '1';
+              try { sessionStorage.setItem('z16thinkon', '1'); } catch (_) {}
+              fixThinkPill();
+            }
+          } catch (_) {}
+        }, 320);
+      } catch (_) {}
+    }, true);
   }
 
   /* --- меню моделей и размышлений: строго ВНИЗ от триггера, без прыжков и «багованности» ---
@@ -620,24 +707,57 @@
   }
   function ensurePlaced(wr) {
     try {
+      if (!wr.__z16seen) return; /* первый кадр ведёт newPopperHandler — без двойной работы */
       var r = wr.getBoundingClientRect();
       if (!(r.width > 0) || !(r.height > 0)) return;
-      if (!wr.__z16seen) {
-        /* первый кадр жизни меню: прячем, ставим финальное место, показываем */
-        wr.__z16seen = true;
-        wr.style.setProperty('visibility', 'hidden', 'important');
-        requestAnimationFrame(function () {
-          try {
-            placeWr(wr);
-            wr.style.setProperty('visibility', 'visible', 'important');
-          } catch (_) { try { wr.style.setProperty('visibility', 'visible', 'important'); } catch (_2) {} }
-        });
-        return;
-      }
+      if (isClosing(wr)) return; /* меню закрывается — не трогаем, чтобы не мигало */
       /* повторные вызовы (скролл и т.п.): зажимаем, если снова вылезло за экран */
       var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
       if (r.left < 8 || r.right > vw - 8 || r.top < 8 || r.bottom > vh - 8) placeWr(wr);
     } catch (_) {}
+  }
+  /* v20: меню закрывается (анимация выхода)? Не двигаем его в этот момент —
+     именно перемещение во время закрытия давало видимое мигание. */
+  function isClosing(wr) {
+    try {
+      var content = wr.firstElementChild;
+      var cid = content && content.id;
+      var anchor = cid ? $('[aria-controls="' + cid + '"]') : null;
+      if (anchor && !isOpen(anchor)) return true;
+      /* запасной признак: content уже спрятан Radix'ом */
+      if (content && content.getAttribute('data-state') === 'closed') return true;
+    } catch (_) {}
+    return false;
+  }
+  /* v20: ГЛАВНЫЙ анти-мигательный механизм. Radix монтирует поппер в body —
+     в мутации он лежит в addedNodes (а не в target!), поэтому старый код видел
+     меню только через 120мс дебаунса — успевал отрисоваться кадр с нативными
+     «Лоу/Медиум/Хай» и кривой позицией. Теперь: в кадре монтирования прячем
+     меню, переименовываем, в следующем кадре ставим финальную позицию и
+     показываем. Пользователь видит только готовое меню. */
+  function newPopperHandler(wr) {
+    if (!wr || wr.__z16seen) return;
+    wr.__z16seen = true;
+    try { wr.style.setProperty('visibility', 'hidden', 'important'); } catch (_) {}
+    /* переименование — синхронно, до кадра отрисовки */
+    try { fixThinkMenu(); } catch (_) {}
+    try { fixChatMenu(); } catch (_) {}
+    try { fixPlugins(); } catch (_) {}
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        try {
+          if (isClosing(wr)) { /* закрылось, пока ждали кадры — просто убираем прятки */
+            wr.style.setProperty('visibility', 'visible', 'important');
+            return;
+          }
+          placeWr(wr);
+          wr.style.setProperty('visibility', 'visible', 'important');
+          try { clampPoppers(); } catch (_) {}
+        } catch (_) {
+          try { wr.style.setProperty('visibility', 'visible', 'important'); } catch (_2) {}
+        }
+      });
+    });
   }
   function clampPoppers() {
     var wrs = $$('[data-radix-popper-content-wrapper]');
@@ -646,8 +766,18 @@
       ensurePlaced(wrs[i]);
     }
   }
-  /* при скролле меню могло снова выехать за край — перезажимаем */
-  try { window.addEventListener('scroll', function () { try { clampPoppers(); } catch (_) {} }, { capture: true, passive: true }); } catch (_) {}
+  /* при скролле меню могло снова выехать за край — перезажимаем.
+     v20: троттлинг 100мс — на каждый кадр скролла дёргать проверку было дорого,
+     из-за этого подлагивало боковое меню. */
+  var scT = 0;
+  try {
+    window.addEventListener('scroll', function () {
+      var now = Date.now();
+      if (now - scT < 100) return;
+      scT = now;
+      try { clampPoppers(); } catch (_) {}
+    }, { capture: true, passive: true });
+  } catch (_) {}
   /* --- v19: повторный тап по открытому подменю-пункту («Другие модели») сворачивает его ---
      Radix на тач-экране не закрывает подменю по повторному тапу (только весь список) —
      синтезируем уход курсора, на который Radix реагирует сворачиванием. */
@@ -1172,6 +1302,21 @@
     'Brainstorm weekend project ideas for a developer'
   ];
   var curSet = [];
+  /* v20: подсказки сменяются раз в НЕСКОЛЬКО ЧАСОВ и живут между запусками
+     (localStorage). Раньше ротация была раз в 2 минуты — владелец просил реже. */
+  var SUG_TTL = 3 * 60 * 60 * 1000; /* 3 часа */
+  function loadCurSet() {
+    try {
+      var raw = localStorage.getItem('z16sug');
+      if (raw) {
+        var j = JSON.parse(raw);
+        if (j && j.lang === lang && Array.isArray(j.set) && j.set.length === 4 && Date.now() - j.t < SUG_TTL) return j.set;
+      }
+    } catch (_) {}
+    var s = shuffle((isEn() ? POOL_EN : POOL_RU).slice()).slice(0, 4);
+    try { localStorage.setItem('z16sug', JSON.stringify({ t: Date.now(), lang: lang, set: s })); } catch (_) {}
+    return s;
+  }
   function shuffle(a) {
     for (var i = a.length - 1; i > 0; i--) {
       var j = Math.floor(Math.random() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t;
@@ -1219,29 +1364,62 @@
         vibrate(6);
       }, true);
     }
-    if (!curSet.length) curSet = shuffle((isEn() ? POOL_EN : POOL_RU).slice()).slice(0, 4);
+    if (!curSet.length) curSet = loadCurSet();
     reapplySuggestions(grid);
   }
-  function rotateSuggestions() {
+  /* v20: мгновенная подмена подсказок при перерисовке (переключение чат↔агент):
+     вызывается из onMut с ведущим троттлингом 250мс — на экране приветствия
+     работает в тот же кадр (без мигания), в стримящемся чате не тормозит. */
+  var sugT = 0, sugTimer = 0;
+  function sugScan() {
+    var now = Date.now();
+    if (now - sugT < 250) {
+      if (!sugTimer) sugTimer = setTimeout(function () { sugTimer = 0; sugScan(); }, 260);
+      return;
+    }
+    sugT = now;
     try {
       var g = findWelcomeGrid();
-      if (g && g.__z16g && g.getBoundingClientRect().height > 0) {
-        curSet = shuffle((isEn() ? POOL_EN : POOL_RU).slice()).slice(0, 4);
-        reapplySuggestions(g);
+      if (g && (!g.__z16g || g.querySelector('button:not([data-z16t])'))) fixSuggestions();
+    } catch (_) {}
+  }
+  function suggestionsTtlTick() {
+    try {
+      var fresh = false;
+      var raw = localStorage.getItem('z16sug');
+      if (raw) {
+        var j = JSON.parse(raw);
+        if (!(j && Date.now() - j.t < SUG_TTL)) fresh = true;
+      } else fresh = true;
+      if (fresh) {
+        curSet = loadCurSet();
+        var g = findWelcomeGrid();
+        if (g && g.__z16g) reapplySuggestions(g);
       }
     } catch (_) {}
   }
-  setInterval(rotateSuggestions, 120000); /* ротация раз в 2 минуты */
+  setInterval(suggestionsTtlTick, 600000); /* проверка раз в 10 минут; смена — раз в 3 часа */
   try {
     document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) rotateSuggestions();
+      if (!document.hidden) { try { sugScan(); } catch (_) {} }
     });
   } catch (_) {}
 
-  /* ================= 7. плагины: каталог виден ЦЕЛИКОМ, без дурацких =================
-     v18: раньше показывали 6 карточек, а остальные 9 прятали за «Загрузить ещё» —
-     владелец не находил свои плагины и решал, что их «не добавили». Теперь весь
-     список виден сразу (диалог скроллится), глупые карточки по-прежнему прячем. */
+  /* ================= 7. плагины: «Ещё» + постепенный показ, без дурацких =================
+     v20 (просьба владельца): вернули кнопку «Ещё» — сначала видно 8 карточек,
+     каждый тап открывает ещё 6; глупые карточки (презентации/счёт/время) по-
+     прежнему спрятаны, а самих плагинов в каталоге стало больше. */
+  var plugN = 8, plugBtn = null;
+  function applyPluginCards(cards) {
+    var shown = 0, hidden = 0;
+    cards.forEach(function (c) {
+      var t = (c.textContent || '');
+      if (PLUGIN_BLOCK.test(t)) { c.style.display = 'none'; return; }
+      if (shown < plugN) { c.style.display = ''; shown++; }
+      else { c.style.display = 'none'; hidden++; }
+    });
+    return hidden;
+  }
   function fixPlugins() {
     var hs = $$('h2');
     var h = null;
@@ -1249,20 +1427,34 @@
     if (!h) return;
     var root = h.closest('[role="dialog"]') || h.parentElement;
     if (!root) return;
-    /* карточки «презентации/счёт/время» прячем в самом диалоге (страховка к фильтру fetch) */
-    if (root.__z16hide) return;
-    root.__z16hide = true;
-    setTimeout(function () {
-      try {
-        var cards = $$('button', root).map(function (b) {
-          return b.closest('div[class*="rounded-2xl"], div[class*="rounded-xl"]');
-        }).filter(function (c, i, arr) { return c && arr.indexOf(c) === i; });
-        cards.forEach(function (c) {
-          var t = (c.textContent || '');
-          if (PLUGIN_BLOCK.test(t)) c.style.display = 'none';
-        });
-      } catch (_) {}
-    }, 60);
+    var cards = $$('button', root).filter(function (b) { return b !== plugBtn && !b.classList.contains('z16-more'); }).map(function (b) {
+      return b.closest('div[class*="rounded-2xl"], div[class*="rounded-xl"]');
+    }).filter(function (c, i, arr) { return c && arr.indexOf(c) === i; });
+    if (!cards.length) return;
+    var hidden = applyPluginCards(cards);
+    /* контейнер сетки карточек — родитель последней видимой */
+    var container = null;
+    for (var k = cards.length - 1; k >= 0; k--) {
+      if (cards[k].style.display !== 'none' && cards[k].parentElement) { container = cards[k].parentElement; break; }
+    }
+    if (!container) return;
+    if (hidden <= 0) {
+      if (plugBtn && plugBtn.isConnected) plugBtn.style.display = 'none';
+      return;
+    }
+    if (!plugBtn || !plugBtn.isConnected) {
+      plugBtn = document.createElement('button');
+      plugBtn.type = 'button';
+      plugBtn.className = 'z16-more';
+      plugBtn.addEventListener('click', function () {
+        plugN += 6;
+        vibrate(6);
+        try { fixPlugins(); } catch (_) {}
+      });
+    }
+    plugBtn.textContent = isEn() ? 'More (' + hidden + ')' : 'Ещё (' + hidden + ')';
+    try { container.parentElement.insertBefore(plugBtn, container.nextSibling); } catch (_) { try { root.appendChild(plugBtn); } catch (_2) {} }
+    plugBtn.style.display = '';
   }
 
   /* ================= 8. вход: без гостя, понятнее и безопаснее ================= */
@@ -1533,9 +1725,283 @@
     }
   }
 
+  /* ================= 10b. ЛОКАЛЬНЫЕ ИИ — ЭКСПЕРИМЕНТ (v20) =================
+     Чат без интернета на маленьких открытых моделях (GGUF). Движок — wllama
+     (llama.cpp под WebAssembly) подгружается с CDN при первом запуске, модель
+     скачивается один раз и кэшируется браузером. ВАЖНО (и написано в меню):
+     это эксперимент — качество и скорость ответов не гарантированы и зависят
+     от телефона. В основной чат приложение не вмешивается. */
+  var LOCAL_MODELS = [
+    { ram: '1–2 ГБ', dm: 1, name: 'Qwen2.5 0.5B', size: '~0,5 ГБ', ctx: 1536, note: 'Самая лёгкая — для слабых телефонов',
+      url: 'https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf' },
+    { ram: '3–4 ГБ', dm: 3, name: 'Qwen2.5 1.5B', size: '~1 ГБ', ctx: 2048, note: 'Шустрый вариант для средних телефонов',
+      url: 'https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf' },
+    { ram: '5–6 ГБ', dm: 5, name: 'Llama 3.2 3B', size: '~2 ГБ', ctx: 2048, note: 'Заметно умнее, но отвечает медленнее',
+      url: 'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf' },
+    { ram: '7–8 ГБ', dm: 7, name: 'Phi-3.5 mini', size: '~2,4 ГБ', ctx: 2048, note: 'Хороший баланс для 8 ГБ ОЗУ',
+      url: 'https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf' },
+    { ram: '10–12 ГБ', dm: 10, name: 'Qwen2.5 7B', size: '~4,7 ГБ', ctx: 2048, note: 'Почти как облачные, но медленно',
+      url: 'https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf' },
+    { ram: '14–16 ГБ', dm: 14, name: 'Qwen2.5 14B', size: '~9 ГБ', ctx: 2048, note: 'Только для флагманов',
+      url: 'https://huggingface.co/bartowski/Qwen2.5-14B-Instruct-GGUF/resolve/main/Qwen2.5-14B-Instruct-Q4_K_M.gguf' },
+    { ram: '18–24 ГБ', dm: 18, name: 'Qwen2.5 32B', size: '~20 ГБ', ctx: 2048, note: 'Очень долгая загрузка и ответы',
+      url: 'https://huggingface.co/bartowski/Qwen2.5-32B-Instruct-GGUF/resolve/main/Qwen2.5-32B-Instruct-Q4_K_M.gguf' }
+  ];
+  var WLLAMA_CDN = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.1/esm';
+  var locW = null, locBusy = false, locAbort = false, locGen = false, locHist = [];
+
+  function locDownloadedMap() {
+    try { return JSON.parse(localStorage.getItem('z16locmodels') || '{}'); } catch (_) { return {}; }
+  }
+  function locMarkDownloaded(url) {
+    try { var m = locDownloadedMap(); m[url] = Date.now(); localStorage.setItem('z16locmodels', JSON.stringify(m)); } catch (_) {}
+  }
+  function ensureLocalEngine() {
+    if (locW) return Promise.resolve(locW);
+    return import(WLLAMA_CDN + '/index.js').then(function (mod) {
+      var Wllama = mod && (mod.Wllama || (mod.default && mod.default.Wllama) || mod.default);
+      if (typeof Wllama !== 'function') throw new Error('no wllama');
+      var cfg = {
+        'single-thread/wllama.wasm': WLLAMA_CDN + '/single-thread/wllama.wasm',
+        'multi-thread/wllama.wasm': WLLAMA_CDN + '/multi-thread/wllama.wasm'
+      };
+      return new Wllama(cfg);
+    });
+  }
+  /* кнопка в боковом меню.
+     v20-правка: сайдбара два — скрытый десктопный aside и мобильный drawer
+     (div[class*="bg-sidebar"]). Вставляем в ВИДИМЫЙ контейнер (ширина > 0);
+     если кнопка осталась в скрытом — перевставляем. */
+  function addLocalAiBtn() {
+    var cands = $$('aside, div[class*="bg-sidebar"]');
+    var side = null;
+    for (var i = 0; i < cands.length; i++) {
+      var r = cands[i].getBoundingClientRect();
+      if (r.width > 0 && r.height > 120) { side = cands[i]; break; }
+    }
+    if (!side) return;
+    var old = $('.z16-local-btn');
+    if (old) {
+      if (old.parentElement === side && side.contains(old)) return;
+      try { old.remove(); } catch (_) {}
+    }
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'z16-local-btn';
+    b.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"></path></svg>' +
+      '<span class="z16-local-lbl"></span><span class="z16-local-badge"></span>';
+    $('.z16-local-lbl', b).textContent = isEn() ? 'Local AI' : 'Локальные ИИ';
+    $('.z16-local-badge', b).textContent = isEn() ? 'beta' : 'эксперимент';
+    b.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      vibrate(6);
+      openLocalMenu();
+    }, true);
+    side.appendChild(b);
+  }
+  /* меню выбора модели по объёму ОЗУ */
+  function openLocalMenu() {
+    try {
+      var old = $('.z16-local-wrap');
+      if (old) old.remove();
+      var wrap = document.createElement('div');
+      wrap.className = 'z16-local-wrap';
+      var dm = 0;
+      try { dm = navigator.deviceMemory || 0; } catch (_) {}
+      var recDm = 0;
+      LOCAL_MODELS.forEach(function (m) { if (dm >= m.dm + 1) recDm = m.dm; });
+      var rows = '';
+      LOCAL_MODELS.forEach(function (m) {
+        var rec = m.dm === recDm;
+        rows += '<div class="z16-local-model' + (rec ? ' z16-local-rec' : '') + '" data-url="' + m.url + '">' +
+          '<div class="z16-local-mhead"><span class="z16-local-mname"></span><span class="z16-local-msize"></span></div>' +
+          '<div class="z16-local-mnote"></div>' +
+          '<div class="z16-local-mrow"><span class="z16-local-mram"></span>' +
+          '<button type="button" class="z16-local-dl"></button></div></div>';
+      });
+      wrap.innerHTML = '<div class="z16-local-card" role="dialog" aria-modal="true">' +
+        '<div class="z16-local-top"><p class="z16-local-title"></p><span class="z16-local-badge2"></span>' +
+        '<button type="button" class="z16-local-x" aria-label="Закрыть">✕</button></div>' +
+        '<p class="z16-local-disc"></p>' +
+        '<p class="z16-local-dev"></p>' +
+        '<div class="z16-local-list">' + rows + '</div>' +
+        '<div class="z16-local-statusbox"><div class="z16-local-bar"><i></i></div><p class="z16-local-status"></p></div>' +
+        '</div>';
+      var card = $('.z16-local-card', wrap);
+      $('.z16-local-title', card).textContent = isEn() ? 'Local AI' : 'Локальные ИИ';
+      $('.z16-local-badge2', card).textContent = isEn() ? 'experimental' : 'эксперимент';
+      $('.z16-local-disc', card).textContent = isEn()
+        ? 'Chat without internet on small open models. Experimental: quality and speed are NOT guaranteed and depend on your phone. The first launch downloads the model once, after that it works offline.'
+        : 'Чат без интернета на маленьких открытых моделях. Это ЭКСПЕРИМЕНТ: качество и скорость ответов не гарантированы и зависят от телефона. При первом запуске модель скачивается один раз, дальше работает офлайн.';
+      $('.z16-local-dev', card).textContent = dm > 0
+        ? (isEn() ? 'Browser sees ~' + dm + ' GB of RAM — a fitting option is highlighted' : 'Браузер видит примерно ' + dm + ' ГБ ОЗУ — подходящий вариант подсвечен')
+        : (isEn() ? 'Could not detect RAM — pick by your phone specs' : 'Объём ОЗУ определить не удалось — выберите по характеристикам телефона');
+      var models = $$('.z16-local-model', card);
+      models.forEach(function (el, i) {
+        var m = LOCAL_MODELS[i];
+        $('.z16-local-mname', el).textContent = m.name;
+        $('.z16-local-msize', el).textContent = m.size;
+        $('.z16-local-mnote', el).textContent = m.note;
+        $('.z16-local-mram', el).textContent = (isEn() ? 'RAM: ' : 'ОЗУ: ') + m.ram;
+        var dlMap = locDownloadedMap();
+        $('.z16-local-dl', el).textContent = dlMap[m.url]
+          ? (isEn() ? 'Open chat (downloaded)' : 'Открыть чат (скачано)')
+          : (isEn() ? 'Download & open chat' : 'Скачать и открыть чат');
+      });
+      document.body.appendChild(wrap);
+      var st = $('.z16-local-status', card);
+      var bar = $('.z16-local-bar i', card);
+      var close = function () {
+        locAbort = true;
+        try { if (locGen && locW && locW.abort) locW.abort(); } catch (_) {}
+        try { wrap.remove(); } catch (_) {}
+        setTimeout(function () { locAbort = false; }, 300);
+      };
+      $('.z16-local-x', card).addEventListener('click', close);
+      wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
+      $$('.z16-local-dl', card).forEach(function (btn, i) {
+        btn.addEventListener('click', function () {
+          if (locBusy) return;
+          startLocalChat(LOCAL_MODELS[i], st, bar, card);
+        });
+      });
+    } catch (_) {}
+  }
+  function startLocalChat(m, st, bar, card) {
+    locBusy = true;
+    locAbort = false;
+    st.textContent = isEn() ? 'Loading the engine…' : 'Загружаю движок…';
+    bar.style.width = '4%';
+    var done = function () { locBusy = false; };
+    ensureLocalEngine().then(function (w) {
+      if (locAbort) throw new Error('closed');
+      locW = w;
+      st.textContent = isEn() ? 'Downloading the model (once)…' : 'Скачиваю модель — это один раз…';
+      return w.loadModelFromUrl(m.url, {
+        n_ctx: m.ctx || 2048,
+        progressCallback: function (p) {
+          try {
+            var pct = p && p.total ? Math.round(100 * p.loaded / p.total) : 0;
+            bar.style.width = Math.max(4, Math.min(100, pct)) + '%';
+            st.textContent = (isEn() ? 'Downloading the model — ' : 'Скачиваю модель — ') + pct + '%';
+          } catch (_) {}
+        }
+      });
+    }).then(function () {
+      locMarkDownloaded(m.url);
+      done();
+      openLocalChatUI(m);
+    }).catch(function () {
+      done();
+      bar.style.width = '0';
+      st.textContent = locAbort ? '' : (isEn()
+        ? 'Could not load. Internet is needed for the first download, and the model must fit in memory. Try a smaller one.'
+        : 'Не получилось. Для первого скачивания нужен интернет, и модель должна помещаться в память. Попробуйте модель поменьше.');
+    });
+  }
+  /* отдельный чат с локальной моделью */
+  function openLocalChatUI(m) {
+    try {
+      var old = $('.z16-local-wrap');
+      if (old) old.remove();
+      var wrap = document.createElement('div');
+      wrap.className = 'z16-local-wrap';
+      wrap.innerHTML = '<div class="z16-local-card z16-local-chat" role="dialog" aria-modal="true">' +
+        '<div class="z16-local-top"><p class="z16-local-title"></p><span class="z16-local-badge2"></span>' +
+        '<button type="button" class="z16-local-back"></button>' +
+        '<button type="button" class="z16-local-x" aria-label="Закрыть">✕</button></div>' +
+        '<div class="z16-local-msgs"></div>' +
+        '<div class="z16-local-inrow"><textarea class="z16-local-in" rows="2"></textarea>' +
+        '<button type="button" class="z16-local-send" aria-label="Отправить"></button></div>' +
+        '<p class="z16-local-foot"></p></div>';
+      var card = $('.z16-local-card', wrap);
+      $('.z16-local-title', card).textContent = m.name;
+      $('.z16-local-badge2', card).textContent = isEn() ? 'offline · experimental' : 'офлайн · эксперимент';
+      $('.z16-local-back', card).textContent = isEn() ? '← Models' : '← Модели';
+      $('.z16-local-send', card).textContent = '➤';
+      $('.z16-local-foot', card).textContent = isEn()
+        ? 'Local model: no internet used. Quality/speed depend on the phone.'
+        : 'Локальная модель: интернет не используется. Качество и скорость зависят от телефона.';
+      document.body.appendChild(wrap);
+      var msgs = $('.z16-local-msgs', card);
+      var inp = $('.z16-local-in', card);
+      var send = $('.z16-local-send', card);
+      locHist = [];
+      function bubble(cls, text) {
+        var d = document.createElement('div');
+        d.className = 'z16-local-msg ' + cls;
+        d.textContent = text || '';
+        msgs.appendChild(d);
+        msgs.scrollTop = msgs.scrollHeight;
+        return d;
+      }
+      bubble('z16-local-ai', isEn()
+        ? 'Hi! I am ' + m.name + ' running on your phone. Ask me anything — I answer slowly, especially big questions.'
+        : 'Привет! Я — ' + m.name + ', работаю прямо на телефоне. Отвечаю небыстро, особенно на сложные вопросы.');
+      var close = function () {
+        try { if (locGen && locW && locW.abort) locW.abort(); } catch (_) {}
+        try { wrap.remove(); } catch (_) {}
+      };
+      $('.z16-local-x', card).addEventListener('click', close);
+      $('.z16-local-back', card).addEventListener('click', function () {
+        close();
+        setTimeout(openLocalMenu, 60);
+      });
+      function runSend() {
+        var t = (inp.value || '').trim();
+        if (!t || locGen) return;
+        inp.value = '';
+        bubble('z16-local-user', t);
+        var ai = bubble('z16-local-ai', '…');
+        locGen = true;
+        send.style.opacity = '0.4';
+        var sysp = isEn()
+          ? 'You are a helpful assistant running locally on the phone. Answer briefly and clearly.'
+          : 'Ты — помощник, работающий локально на телефоне. Отвечай кратко и по делу.';
+        var acc = '';
+        var history = [{ role: 'system', content: sysp }].concat(locHist.slice(-8));
+        history.push({ role: 'user', content: t });
+        var onTok = function (tok, piece, cur) {
+          try {
+            acc = typeof cur === 'string' ? cur : (acc + (piece || ''));
+            ai.textContent = acc || '…';
+            msgs.scrollTop = msgs.scrollHeight;
+          } catch (_) {}
+        };
+        var opts = { nPredict: 350, onNewToken: onTok };
+        var p;
+        try {
+          if (typeof locW.createChatCompletion === 'function') p = locW.createChatCompletion(history, opts);
+          else p = locW.createCompletion(history.map(function (h) { return h.role + ': ' + h.content; }).join('\n') + '\nassistant:', opts);
+        } catch (_) { p = Promise.reject(new Error('engine')); }
+        p.then(function (fin) {
+          var out = (typeof fin === 'string' && fin) ? fin : acc;
+          if (!out) out = isEn() ? '(empty answer)' : '(пустой ответ)';
+          ai.textContent = out;
+          locHist.push({ role: 'user', content: t });
+          locHist.push({ role: 'assistant', content: out });
+          locGen = false;
+          send.style.opacity = '1';
+          msgs.scrollTop = msgs.scrollHeight;
+        }).catch(function () {
+          if (!locAbort) ai.textContent = isEn() ? '[generation error]' : '[ошибка генерации]';
+          locGen = false;
+          send.style.opacity = '1';
+        });
+      }
+      send.addEventListener('click', runSend);
+      inp.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runSend(); }
+      });
+      setTimeout(function () { try { inp.focus(); } catch (_) {} }, 120);
+    } catch (_) {}
+  }
+
   /* ================= движок наблюдения ================= */
   try { subToggleGuard(); } catch (_) {}
   try { outsideCloseGuard(); } catch (_) {}
+  try { pillToggleGuard(); } catch (_) {}
   var moT = null;
   function sweep() {
     try { fixPills(); } catch (_) {}
@@ -1552,33 +2018,53 @@
     try { fixGuestLabel(); } catch (_) {}
     try { fixChatMenu(); } catch (_) {}
     try { fixSettingsLang(); } catch (_) {}
+    try { addLocalAiBtn(); } catch (_) {}
   }
   function onMut(muts) {
-    /* анти-мигание: меню, пилюлю и позиции обрабатываем немедленно, до отрисовки кадра */
+    /* v20 АНТИ-МИГАНИЕ: смотрим В addedNodes. Radix монтирует поппер прямо в
+       body — раньше target был body, наш поиск по target ничего не находил,
+       и меню успевало отрисоваться с нативными подписями (кадр «Лоу/Хай»),
+       а подсказки — с нативными текстами. Теперь ловим в кадре монтирования. */
+    var popperTouched = false, mainTouched = false;
     for (var i = 0; i < muts.length; i++) {
-      var n = muts[i].target;
-      if (n && n.nodeType === 1) {
-        var el = n.matches && (n.matches('[data-radix-popper-content-wrapper]') || n.matches('[role="menu"]')) ? n : (n.closest && n.closest('[data-radix-popper-content-wrapper]'));
-        if (el) {
-          try { fixThinkMenu(); } catch (_) {}
-          try { kickPin(); } catch (_) {}
-          try { clampPoppers(); } catch (_) {} /* подменю зажимаем в тот же кадр */
-          try { fixChatMenu(); } catch (_) {}
-        }
-        var isFooter = n.matches && n.matches('footer button') || (n.closest && n.closest('footer button[aria-label="Уровень размышлений"]'));
-        if (isFooter) {
-          try { fixThinkPill(); } catch (_) {}
+      var m = muts[i];
+      var nds = m.addedNodes;
+      if (nds && nds.length) {
+        for (var j = 0; j < nds.length; j++) {
+          var nd = nds[j];
+          if (!nd || nd.nodeType !== 1) continue;
+          var wr = nd.matches && nd.matches('[data-radix-popper-content-wrapper]') ? nd
+            : (nd.querySelector ? nd.querySelector('[data-radix-popper-content-wrapper]') : null);
+          if (wr) { try { newPopperHandler(wr); } catch (_) {} popperTouched = true; }
+          if (nd.tagName === 'MAIN' || (nd.querySelector && nd.querySelector('main'))) mainTouched = true;
         }
       }
+      var n = m.target;
+      if (n && n.nodeType === 1) {
+        if (n.closest && n.closest('[data-radix-popper-content-wrapper]')) popperTouched = true;
+        if (n.closest && n.closest('footer button[aria-label="Уровень размышлений"]')) {
+          try { fixThinkPill(); } catch (_) {}
+        }
+        if (n.tagName === 'MAIN' || (n.closest && n.closest('main'))) mainTouched = true;
+      }
+    }
+    if (popperTouched) {
+      try { fixThinkMenu(); } catch (_) {}
+      try { fixChatMenu(); } catch (_) {}
+      try { kickPin(); } catch (_) {}
+      try { clampPoppers(); } catch (_) {} /* подменю зажимаем в тот же кадр */
+    }
+    if (mainTouched) {
+      try { sugScan(); } catch (_) {} /* подсказки — без мигания при чат↔агент */
     }
     if (moT) clearTimeout(moT);
-    moT = setTimeout(sweep, 120);
+    moT = setTimeout(sweep, 200);
   }
   try { guardTokenBridge(); } catch (_) {}
   try {
     var mo = new MutationObserver(onMut);
     mo.observe(document.body || document.documentElement, { childList: true, subtree: true });
   } catch (_) {}
-  setInterval(sweep, 1500);
+  setInterval(sweep, 2000);
   sweep();
 })();

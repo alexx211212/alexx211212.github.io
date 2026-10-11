@@ -5,7 +5,7 @@
  *  - Статика (icons, manifest, _next): network-first (кэш — только офлайн-фолбэк)
  *  - /api/*: network-only (стриминг не кэшируем)
  */
-const VERSION = 'v19';
+const VERSION = 'v20';
 const SHELL_CACHE = `shell-${VERSION}`;
 const ASSET_CACHE = `assets-${VERSION}`;
 const OFFLINE_URL = '/offline.html';

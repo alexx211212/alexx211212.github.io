@@ -1,6 +1,6 @@
 {
-  "$comment": "Каталог плагинов ZaiChat. Первичный источник — GitHub (raw.githubusercontent.com/hegr121/zai-plugins/main/registry.json), этот файл — фолбэк и базовый каталог. v15.4: убраны дублирующие способности модели (презентации, счёт, время), добавлены плагины в стиле GPT и Claude. Формат карточки: name, description, author, icon (zap|globe|code|book|search|terminal|star|brain|pencil|image|translate), url — ссылка на манифест zai-plugin.json.",
-  "updated": "2026-10-11",
+  "$comment": "Каталог плагинов ZaiChat. Первичный источник — GitHub (raw.githubusercontent.com/hegr121/zai-plugins/main/registry.json), этот файл — фолбэк и базовый каталог. v15.4: убраны дублирующие способности модели (презентации, счёт, время), добавлены плагины в стиле GPT и Claude. Формат карточки: name, description, author, icon (zap|globe|code|book|search|terminal|star|brain|pencil|image|translate), url — ссылка на манифест zai-plugin.json. v20: добавлены рецепты, тренер, учитель слов, собеседование, бюджет, привычки, истории.",
+  "updated": "2026-10-12",
   "plugins": [
     {
       "name": "Краткие ответы",
@@ -106,6 +106,55 @@
       "author": "Z.ai port",
       "icon": "book",
       "url": "/plugins/claude-docs/zai-plugin.json"
+    },
+    {
+      "name": "Рецепты из того, что есть",
+      "description": "Говоришь, какие продукты дома — получаешь 3 рецепта ужина с шагами и временем",
+      "author": "Z.ai port",
+      "icon": "zap",
+      "url": "/plugins/recipes/zai-plugin.json"
+    },
+    {
+      "name": "Тренер дома",
+      "description": "План тренировок под ваш уровень, время и инвентарь — без зала и оборудования",
+      "author": "Z.ai port",
+      "icon": "zap",
+      "url": "/plugins/fitness/zai-plugin.json"
+    },
+    {
+      "name": "Учитель слов",
+      "description": "Учит словам любого языка: 10 слов с транскрипцией, примерами и мини-тестом в конце",
+      "author": "Z.ai port",
+      "icon": "book",
+      "url": "/plugins/words/zai-plugin.json"
+    },
+    {
+      "name": "Собеседование",
+      "description": "Тренировка интервью по вашей профессии: вопросы, разбор ответов и что улучшить",
+      "author": "Z.ai port",
+      "icon": "brain",
+      "url": "/plugins/interview/zai-plugin.json"
+    },
+    {
+      "name": "Список и бюджет",
+      "description": "Составляет список покупок и раскладывает бюджет так, чтобы хватало до зарплаты",
+      "author": "Z.ai port",
+      "icon": "star",
+      "url": "/plugins/shopping/zai-plugin.json"
+    },
+    {
+      "name": "Сон и привычки",
+      "description": "Мягкий план режима и привычек: как наладить сон и не бросить через неделю",
+      "author": "Z.ai port",
+      "icon": "brain",
+      "url": "/plugins/habits/zai-plugin.json"
+    },
+    {
+      "name": "Сочинитель историй",
+      "description": "Сказки и рассказы по вашему жанру: для детей, страшные, смешные — с продолжением по просьбе",
+      "author": "Z.ai port",
+      "icon": "pencil",
+      "url": "/plugins/stories/zai-plugin.json"
     }
   ]
 }

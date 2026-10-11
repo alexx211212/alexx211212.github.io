@@ -1,8 +1,9 @@
-/* ZaiChat v19 — слой исправлений поверх v15.4/v16–v18 (не трогает оригинальные стили)
+/* ZaiChat v20 — слой исправлений поверх v15.4/v16–v19 (не трогает оригинальные стили)
    1) панель ввода крупнее, текст ВСЕХ кнопок одного размера (12px)
    2) производительность анимаций (без лагов) и память
    3) нормальный вид блока размышлений
    4) стили тостов, диалогов слоя и переключателя языка
+   5) v20: боковое меню быстрее; стили «Локальные ИИ» (эксперимент)
    ВАЖНО: названия кнопок больше НЕ прячутся (ошибка v15.3 — кнопка «Плагины» без подписи) */
 
 /* ---------- 1. Тулбар ввода: влезает в экран (320–480px), ТЕКСТ ОДНОГО РАЗМЕРА ----------
@@ -310,3 +311,184 @@ main div:has(> button[aria-expanded]) > div > div {
   background: #f59e0b !important;
   color: #18181b !important;
 }
+
+/* ---------- 10. v20: боковое меню открывается быстрее ----------
+   «Ощущение задержки»: долгие transition на выдвижной панели.
+   Ускоряем только панели сайдбара, не трогая остальное. */
+aside,
+[data-slot="sidebar"],
+[class*="sidebar-container"],
+div[class*="bg-sidebar"] {
+  transition-duration: 0.15s !important;
+}
+
+/* ---------- 11. v20: кнопка «Локальные ИИ» в боковом меню ---------- */
+.z16-local-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 16px);
+  margin: 6px 8px 10px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(127, 127, 127, 0.28);
+  background: rgba(127, 127, 127, 0.08);
+  color: inherit;
+  font: 600 12.5px/1.2 var(--font-sans, system-ui, sans-serif);
+  cursor: pointer;
+  text-align: left;
+  flex-shrink: 0;
+}
+.z16-local-btn:active { transform: scale(0.99); }
+.z16-local-btn svg { flex-shrink: 0; opacity: 0.75; }
+.z16-local-lbl { flex: 1; }
+.z16-local-badge {
+  font: 700 9px/1.2 var(--font-sans, system-ui, sans-serif);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 999px;
+  padding: 2px 6px;
+}
+
+/* ---------- 12. v20: диалог «Локальные ИИ» и офлайн-чат ---------- */
+.z16-local-wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483001;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+}
+.z16-local-card {
+  width: min(94vw, 420px);
+  max-height: 88dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: #202024;
+  color: #f4f4f5;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+}
+@media (prefers-color-scheme: light) {
+  .z16-local-card { background: #ffffff; color: #18181b; border-color: rgba(0, 0, 0, 0.1); }
+}
+.z16-local-top { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.z16-local-title { font: 600 16px/1.3 var(--font-sans, system-ui, sans-serif); margin: 0; flex: 1; }
+.z16-local-badge2 {
+  font: 700 9px/1.2 var(--font-sans, system-ui, sans-serif);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 999px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+.z16-local-x, .z16-local-back {
+  border: none;
+  background: rgba(127, 127, 127, 0.15);
+  color: inherit;
+  border-radius: 10px;
+  min-width: 30px;
+  min-height: 30px;
+  font: 600 12px/1.2 var(--font-sans, system-ui, sans-serif);
+  cursor: pointer;
+  padding: 0 8px;
+}
+.z16-local-disc { font: 400 12px/1.55 var(--font-sans, system-ui, sans-serif); opacity: 0.72; margin: 0 0 8px; }
+.z16-local-dev { font: 500 12px/1.5 var(--font-sans, system-ui, sans-serif); color: #f59e0b; margin: 0 0 12px; }
+.z16-local-list { display: flex; flex-direction: column; gap: 8px; }
+.z16-local-model {
+  border: 1px solid rgba(127, 127, 127, 0.28);
+  border-radius: 14px;
+  padding: 10px 12px;
+}
+.z16-local-rec { border-color: rgba(245, 158, 11, 0.65); background: rgba(245, 158, 11, 0.07); }
+.z16-local-mhead { display: flex; align-items: baseline; gap: 8px; }
+.z16-local-mname { font: 600 13.5px/1.3 var(--font-sans, system-ui, sans-serif); flex: 1; }
+.z16-local-msize { font: 500 11.5px/1.3 var(--font-sans, system-ui, sans-serif); opacity: 0.6; white-space: nowrap; }
+.z16-local-mnote { font: 400 11.5px/1.45 var(--font-sans, system-ui, sans-serif); opacity: 0.62; margin-top: 3px; }
+.z16-local-mrow { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.z16-local-mram { font: 500 11px/1.3 var(--font-sans, system-ui, sans-serif); opacity: 0.55; flex: 1; }
+.z16-local-dl {
+  border: none;
+  background: #f59e0b;
+  color: #18181b;
+  border-radius: 10px;
+  min-height: 34px;
+  padding: 0 12px;
+  font: 700 12px/1.2 var(--font-sans, system-ui, sans-serif);
+  cursor: pointer;
+}
+.z16-local-dl:active { transform: scale(0.98); }
+.z16-local-statusbox { margin-top: 12px; }
+.z16-local-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, 0.2);
+  overflow: hidden;
+}
+.z16-local-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #f59e0b;
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+.z16-local-status { font: 400 11.5px/1.5 var(--font-sans, system-ui, sans-serif); opacity: 0.7; margin: 6px 0 0; min-height: 15px; }
+/* офлайн-чат */
+.z16-local-chat { display: flex; flex-direction: column; height: min(86dvh, 640px); }
+.z16-local-msgs {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 2px 10px;
+}
+.z16-local-msg {
+  max-width: 86%;
+  border-radius: 14px;
+  padding: 9px 12px;
+  font: 400 13px/1.5 var(--font-sans, system-ui, sans-serif);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.z16-local-user { align-self: flex-end; background: #f59e0b; color: #18181b; }
+.z16-local-ai { align-self: flex-start; background: rgba(127, 127, 127, 0.14); }
+.z16-local-inrow { display: flex; gap: 8px; align-items: flex-end; }
+.z16-local-in {
+  flex: 1;
+  box-sizing: border-box;
+  background: rgba(127, 127, 127, 0.12);
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  border-radius: 12px;
+  color: inherit;
+  font: 400 14px/1.4 var(--font-sans, system-ui, sans-serif);
+  padding: 10px 12px;
+  min-height: 46px;
+  max-height: 120px;
+  resize: none;
+  outline: none;
+}
+.z16-local-in:focus { border-color: #f59e0b; }
+.z16-local-send {
+  border: none;
+  background: #f59e0b;
+  color: #18181b;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  font: 700 16px/1 var(--font-sans, system-ui, sans-serif);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.z16-local-foot { font: 400 10.5px/1.5 var(--font-sans, system-ui, sans-serif); opacity: 0.5; margin: 8px 0 0; }
