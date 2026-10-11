@@ -1,19 +1,20 @@
-/*! ZaiChat v16 — слой исправлений по 6 жалобам владельца (поверх v15.4).
- *  1) Меню и кнопки больше не съезжают: подсказок ровно 4 (без клонов растягивавших
- *     сетку), кнопка «Перенести» не сжимает шапку (flex-shrink:0), меню позиционируются
- *     точно по триггеру (aria-controls) и удерживаются rAF-циклом без прыжков.
- *  2) «Рассуждения»: подпись уровня чинится МГНОВЕННО в кадре мутации — нативные
- *     «Ультра/Глубокие» и дубли («ВысокоеВысокое») больше не мелькают.
- *  3) Подсказки: ровно 4, ротация по 4 из большой базы.
- *  4) Меню моделей открывается вниз от кнопки без «багованного» позиционирования.
- *  5) Вход через Z.ai: приложение открывает нативную модалку входа Z.ai (гостя
- *     стираем до загрузки, жмём «Sign in» за него), назад — возврат в приложение.
- *  6) Иконка приложения: белая Z на тёмном фоне #323232 как на офф-сайте (в APK).
+/*! ZaiChat v18 — слой исправлений поверх v15.4/v16.
+ *  Новое в v18 (по повторным жалобам владельца):
+ *  1) Тулбар ввода больше не вылезает за экран: на 360px кнопки «Голосовой ввод» и
+ *     «Отправить сообщение» уезжали за правый край (отправка оказывалась на x=378 при
+ *     ширине 360) — теперь весь тулбар влезает даже на 320px (проверено 320/360/412).
+ *  2) Подменю «Другие модели» открывалось на x=-227 — целиком за левым краем.
+ *     Теперь ЛЮБОЙ popper зажимается в экран (clampPoppers) в кадре мутации.
+ *  3) Плагины: каталог показывается ЦЕЛИКОМ сразу (15 карточек), без прятания
+ *     за «Загрузить ещё» — владелец не находил свои плагины.
+ *  Сохранено из v16: ровно 4 подсказки без клонов, «Перенести» без сжатия шапки,
+ *     пилюля размышлений мгновенно и без дублей, меню моделей/размышлений приколоты
+ *     вниз через aria-controls + rAF, вход через Z.ai, белая иконка APK.
  *  Работает поверх приложения и не мешает ему: всё в try/catch. */
 (function () {
   'use strict';
   if (window.__z16x) return;
-  window.__z16x = { v: '16' };
+  window.__z16x = { v: '18' };
 
   /* ================= утилиты ================= */
   function $(s, r) { try { return (r || document).querySelector(s); } catch (_) { return null; } }
@@ -561,6 +562,67 @@
       });
     });
   }
+  /* --- v18: зажим ЛЮБОГО всплывающего меню в экран ---
+     Radix умеет открывать подменю («Другие модели») за краем: на телефоне 360px
+     подменю оказывалось на x=-227, виден был только край.
+     КАК МОЖНО (бисекция подтвердила): нельзя трогать top/left + transform поппера
+     во время его позиционирования — подменю тогда вообще не открывается.
+     Поэтому: ждём 120мс (Radix сам всё расставил), затем сдвигаем ТОЛЬКО
+     трансформом (дельтой к текущему переводу), top/left не трогаем вовсе. */
+  function clampPoppers() {
+    var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+    if (!vw || !vh) return;
+    $$('[data-radix-popper-content-wrapper]').forEach(function (wr) {
+      if (wr.__z16cT) return; /* таймер уже стоит */
+      var r = wr.getBoundingClientRect();
+      if (!(r.width > 0) || !(r.height > 0)) return;
+      var out = r.left < 8 || r.right > vw - 8 || r.top < 8 || r.bottom > vh - 8;
+      if (!out) return;
+      wr.__z16cT = setTimeout(function () {
+        wr.__z16cT = 0;
+        try {
+          var r2 = wr.getBoundingClientRect();
+          if (!(r2.width > 0) || !(r2.height > 0)) return;
+          var vw2 = document.documentElement.clientWidth, vh2 = document.documentElement.clientHeight;
+          var w = r2.width, h = r2.height;
+          /* базовый зажим: текущее место, но внутри экрана */
+          var nx = Math.min(Math.max(r2.left, 8), vw2 - 8 - w);
+          var ny = Math.min(Math.max(r2.top, 8), vh2 - 8 - h);
+          nx = Math.max(8, Math.round(nx)); ny = Math.max(8, Math.round(ny));
+          /* подменю с якорем (aria-controls на триггере) размещаем ПОД ЯКОРЕМ —
+             как в мобильном ChatGPT: подменю продолжение меню, а не окно сбоку.
+             ВАЖНО: новое место не должно перекрывать сам якорь, иначе Radix
+             закрывает подменю (синтетические hover-события по краю). */
+          var content = wr.firstElementChild;
+          var cid = content && content.id;
+          var anchor = cid ? $('[aria-controls="' + cid + '"]') : null;
+          if (anchor) {
+            var ar = anchor.getBoundingClientRect();
+            if (ar.width > 0) {
+              var ax = Math.min(Math.max(Math.round(ar.left), 8), vw2 - 8 - w);
+              var ay = Math.round(ar.bottom + 6);
+              ay = Math.min(Math.max(ay, 8), vh2 - 8 - h);
+              var inter = !(ax + w < ar.left || ax > ar.right || ay + h < ar.top || ay > ar.bottom);
+              if (!inter) { nx = ax; ny = ay; }
+            }
+          }
+          if (Math.abs(nx - r2.left) < 1 && Math.abs(ny - r2.top) < 1) return;
+          /* сдвиг ТОЛЬКО трансформом: top/left не трогаем (их борьба с
+             позиционированием Radix не даёт подменю открыться), к текущему
+             переводу прибавляем дельту до нужной точки */
+          var mt = /matrix\(([^)]+)\)/.exec(getComputedStyle(wr).transform || '');
+          var tx = 0, ty = 0;
+          if (mt) { var pp = mt[1].split(','); tx = parseFloat(pp[4]) || 0; ty = parseFloat(pp[5]) || 0; }
+          tx += nx - Math.round(r2.left); ty += ny - Math.round(r2.top);
+          wr.style.setProperty('transform', 'translate(' + Math.round(tx) + 'px,' + Math.round(ty) + 'px)', 'important');
+          wr.style.setProperty('max-height', Math.round(Math.min(h, vh2 - 16)) + 'px', 'important');
+          wr.style.setProperty('overflow-y', 'auto', 'important');
+        } catch (_) {}
+      }, 120);
+    });
+  }
+  /* при скролле подменю могло снова выехать за край — перезажимаем */
+  try { window.addEventListener('scroll', function () { try { clampPoppers(); } catch (_) {} }, { capture: true, passive: true }); } catch (_) {}
   var pinRaf = 0, pinIdle = 0;
   function pinFrame() {
     pinRaf = 0;
@@ -576,6 +638,7 @@
         applyBelow(thinkPair);
         any = true;
       }
+      try { clampPoppers(); } catch (_) {} /* подменю и прочие попперы — в экран */
     } catch (_) {}
     if (any) {
       pinIdle = 0;
@@ -1099,8 +1162,10 @@
     });
   } catch (_) {}
 
-  /* ================= 7. плагины: название кнопки, «Загрузить ещё», без дурацких ================= */
-  var pluginHideSel = null;
+  /* ================= 7. плагины: каталог виден ЦЕЛИКОМ, без дурацких =================
+     v18: раньше показывали 6 карточек, а остальные 9 прятали за «Загрузить ещё» —
+     владелец не находил свои плагины и решал, что их «не добавили». Теперь весь
+     список виден сразу (диалог скроллится), глупые карточки по-прежнему прячем. */
   function fixPlugins() {
     var hs = $$('h2');
     var h = null;
@@ -1109,56 +1174,19 @@
     var root = h.closest('[role="dialog"]') || h.parentElement;
     if (!root) return;
     /* карточки «презентации/счёт/время» прячем в самом диалоге (страховка к фильтру fetch) */
-    if (!root.__z16hide) {
-      root.__z16hide = true;
-      setTimeout(function () {
-        try {
-          var cards = $$('button', root).map(function (b) {
-            return b.closest('div[class*="rounded-2xl"], div[class*="rounded-xl"]');
-          }).filter(function (c, i, arr) { return c && arr.indexOf(c) === i; });
-          cards.forEach(function (c) {
-            var t = (c.textContent || '');
-            if (PLUGIN_BLOCK.test(t)) c.style.display = 'none';
-          });
-        } catch (_) {}
-      }, 60);
-    }
-    var installBtns = $$('button', root).filter(function (b) { return (b.textContent || '').trim() === (isEn() ? 'Install' : 'Установить'); });
-    if (installBtns.length < 7) { /* мало карточек — пагинация не нужна */
-      if (root.__z16p) root.__z16p = false;
-      return;
-    }
-    if (root.__z16p) return;
-    root.__z16p = true;
-    var cards2 = installBtns.map(function (b) {
-      return b.closest('div[class*="rounded-2xl"], div[class*="rounded-xl"]') || b.parentElement;
-    }).filter(function (c, i, arr) { return c && arr.indexOf(c) === i && c.style.display !== 'none'; });
-    var container = cards2[0] && cards2[0].parentElement;
-    if (!container) return;
-    var hidden = 0;
-    cards2.forEach(function (c, i) {
-      if (i >= 6) { c.style.display = 'none'; hidden++; }
-    });
-    if (!hidden) return;
-    var more = document.createElement('button');
-    more.type = 'button';
-    more.className = 'z16-more';
-    more.textContent = (isEn() ? 'Load more (' : 'Загрузить ещё (') + hidden + ')';
-    more.addEventListener('click', function () {
-      cards2.forEach(function (c) { c.style.display = ''; });
-      more.remove();
-      root.__z16p = false;
-      vibrate(6);
-    });
-    if (cards2[6]) container.insertBefore(more, cards2[6]); else container.appendChild(more);
-    /* при поиске показываем всё */
-    var search = $('input[placeholder*="Поиск"], input[placeholder*="Search"]', root);
-    if (search && !search.__z16s) {
-      search.__z16s = true;
-      search.addEventListener('input', function () {
-        if (search.value) { cards2.forEach(function (c) { c.style.display = ''; }); var m = $('.z16-more', container); if (m) m.remove(); root.__z16p = false; }
-      });
-    }
+    if (root.__z16hide) return;
+    root.__z16hide = true;
+    setTimeout(function () {
+      try {
+        var cards = $$('button', root).map(function (b) {
+          return b.closest('div[class*="rounded-2xl"], div[class*="rounded-xl"]');
+        }).filter(function (c, i, arr) { return c && arr.indexOf(c) === i; });
+        cards.forEach(function (c) {
+          var t = (c.textContent || '');
+          if (PLUGIN_BLOCK.test(t)) c.style.display = 'none';
+        });
+      } catch (_) {}
+    }, 60);
   }
 
   /* ================= 8. вход: без гостя, понятнее и безопаснее ================= */
@@ -1424,6 +1452,7 @@
     try { fixThinkMenu(); } catch (_) {}
     try { fixThinkPill(); } catch (_) {}
     try { kickPin(); } catch (_) {}
+    try { clampPoppers(); } catch (_) {}
     try { fixShareBtn(); } catch (_) {}
     try { addTransferBtn(); } catch (_) {}
     try { fixMic(); } catch (_) {}
@@ -1443,6 +1472,7 @@
         if (el) {
           try { fixThinkMenu(); } catch (_) {}
           try { kickPin(); } catch (_) {}
+          try { clampPoppers(); } catch (_) {} /* подменю зажимаем в тот же кадр */
           try { fixChatMenu(); } catch (_) {}
         }
         var isFooter = n.matches && n.matches('footer button') || (n.closest && n.closest('footer button[aria-label="Уровень размышлений"]'));

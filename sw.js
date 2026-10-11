@@ -2,10 +2,10 @@
  * Стратегии:
  *  - App shell (префетч): cache-first
  *  - Навигация: network-first -> cache -> /offline
- *  - Статика (icons, manifest): cache-first
+ *  - Статика (icons, manifest, _next): network-first (кэш — только офлайн-фолбэк)
  *  - /api/*: network-only (стриминг не кэшируем)
  */
-const VERSION = 'v16';
+const VERSION = 'v18';
 const SHELL_CACHE = `shell-${VERSION}`;
 const ASSET_CACHE = `assets-${VERSION}`;
 const OFFLINE_URL = '/offline.html';
@@ -78,7 +78,9 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Статика: cache-first с фоновым обновлением
+  // Статика: NETWORK-FIRST с кэшем как офлайн-фолбэком
+  // (v18: раньше был cache-first — устройства со старым кэшем неделями видели
+  //  устаревший UI после обновлений сайта; теперь свежесть всегда в приоритете)
   if (
     url.pathname.startsWith('/icons/') ||
     url.pathname.startsWith('/_next/static/') ||
@@ -88,14 +90,15 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       (async () => {
         const cache = await caches.open(ASSET_CACHE);
-        const cached = await cache.match(request);
-        const network = fetch(request)
-          .then((res) => {
-            if (res.ok) cache.put(request, res.clone());
-            return res;
-          })
-          .catch(() => cached);
-        return cached || network;
+        try {
+          const fresh = await fetch(request);
+          if (fresh.ok) cache.put(request, fresh.clone());
+          return fresh;
+        } catch {
+          const cached = await cache.match(request);
+          if (cached) return cached;
+          throw new Error('offline and not cached');
+        }
       })()
     );
   }

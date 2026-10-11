@@ -1,24 +1,75 @@
-/* ZaiChat v15.4 — слой исправлений поверх v15 (не трогает оригинальные стили)
-   1) фиксы «съезжающего» интерфейса на телефоне
+/* ZaiChat v18 — слой исправлений поверх v15.4/v16 (не трогает оригинальные стили)
+   1) фиксы «съезжающего» интерфейса на телефоне — теперь и на 320px всё влезает
    2) производительность анимаций (без лагов) и память
    3) нормальный вид блока размышлений
    4) стили тостов, диалогов слоя и переключателя языка
    ВАЖНО: названия кнопок больше НЕ прячутся (ошибка v15.3 — кнопка «Плагины» без подписи) */
 
-/* ---------- 1. Тулбар ввода: компактно на узких телефонах, но С НАЗВАНИЯМИ ---------- */
+/* ---------- 1. Тулбар ввода и шапка: всегда влезают в экран (320–480px), С НАЗВАНИЯМИ ----------
+   v18: раньше на 360px кнопки «Голосовой ввод» и «Отправить сообщение» уезжали за правый
+   край экрана (кнопка отправки оказывалась на x=378 при ширине 360) — теперь весь тулбар
+   помещается даже на 320px: проверено на 320/360/412. */
 @media (max-width: 480px) {
+  footer button { min-width: 0 !important; }
   footer button[aria-label="Поиск"],
   footer button[aria-label="Плагины"] {
-    padding-left: 0.4rem !important;
-    padding-right: 0.4rem !important;
-    gap: 0.3rem !important;
-    font-size: 11px !important;
+    padding-left: 0.15rem !important;
+    padding-right: 0.15rem !important;
+    gap: 0.1rem !important;
+    font-size: 9px !important;
+    letter-spacing: -0.01em !important;
+  }
+  footer button[aria-label="Поиск"] svg,
+  footer button[aria-label="Плагины"] svg {
+    width: 12px !important;
+    height: 12px !important;
   }
   footer button[aria-label="Уровень размышлений"] {
-    padding-left: 0.4rem !important;
-    padding-right: 0.4rem !important;
+    padding-left: 0.2rem !important;
+    padding-right: 0.2rem !important;
+    gap: 0.1rem !important;
+    font-size: 9px !important;
+    max-width: 74px !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
   }
-  footer div.flex.items-center.gap-0\.5 { gap: 0.125rem !important; }
+  footer button[aria-label="Уровень размышлений"] svg {
+    width: 12px !important;
+    height: 12px !important;
+    flex-shrink: 0 !important;
+  }
+  footer button[aria-label="Уровень размышлений"] span {
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+  footer button[aria-label="Прикрепить"],
+  footer button[aria-label="Голосовой ввод"],
+  footer button[aria-label="Отправить сообщение"] {
+    width: 30px !important;
+    height: 30px !important;
+    padding: 0 !important;
+    flex-shrink: 0 !important;
+  }
+  footer div.flex.items-center.gap-0\.5 { gap: 0 !important; }
+}
+
+/* Очень узкие экраны (≤340px): дожимаем шапку и контейнер ввода, чтобы ничего не торчало */
+@media (max-width: 380px) {
+  footer div.mx-auto.w-full {
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+  }
+}
+@media (max-width: 340px) {
+  header button { min-width: 0 !important; }
+  header button[aria-label="Chat"],
+  header button[aria-label="Agent"] {
+    font-size: 11px !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+  header button[aria-label="Открыть меню"] { width: 38px !important; }
 }
 
 /* Любые всплывающие меню не шире экрана и с прокруткой по высоте
