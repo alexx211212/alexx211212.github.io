@@ -1,7 +1,0 @@
-{
-  "name": "Грамматика",
-  "version": "1.0.0",
-  "description": "Проверка орфографии и пунктуации, мягкие правки",
-  "author": "Z.ai port",
-  "entry": "plugin.js"
-}

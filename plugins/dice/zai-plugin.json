@@ -1,7 +1,0 @@
-{
-  "name": "Кубик и монетка",
-  "version": "1.0.0",
-  "description": "Броски d6/d20 и монетка — честный локальный рандом",
-  "author": "Z.ai port",
-  "entry": "plugin.js"
-}

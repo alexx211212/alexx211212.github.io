@@ -1,18 +1,27 @@
 {
-  "$comment": "Каталог плагинов ZaiChat v16. Первичный источник — raw.githubusercontent.com/hegr121/zai-plugins/main/registry.json, этот файл — фолбэк и базовый каталог. Кнопка «Загрузить ещё» показывает следующую порцию.",
+  "$comment": "Каталог плагинов ZaiChat. Первичный источник — GitHub (raw.githubusercontent.com/hegr121/zai-plugins/main/registry.json), этот файл — фолбэк и базовый каталог. Формат карточки: name, description, author, icon (zap|globe|code|book|search|terminal|star|brain|pencil|image|translate|calculator), url — ссылка на манифест zai-plugin.json или репозиторий.",
   "updated": "2026-10-11",
   "plugins": [
-    { "name": "AI PPT — презентации", "description": "Настоящие .pptx: титул, слайды с тезисами, заметки спикера. Кнопка скачивания прямо в чате", "author": "Z.ai port", "icon": "image", "url": "/plugins/ppt/zai-plugin.json" },
-    { "name": "Краткие ответы", "description": "Модель отвечает сжато и по делу: без воды, повторов и лишних вступлений", "author": "Z.ai port", "icon": "zap", "url": "/plugins/terse/zai-plugin.json" },
-    { "name": "План перед ответом", "description": "Сначала краткий план, потом полный структурированный ответ — порядок вместо каши", "author": "Z.ai port", "icon": "brain", "url": "/plugins/plan/zai-plugin.json" },
-    { "name": "Погода", "description": "Спросите «погода в Москве» — плагин подставит свежий прогноз из открытого метео-API", "author": "Z.ai port", "icon": "star", "url": "/plugins/weather/zai-plugin.json" },
-    { "name": "Википедия", "description": "Короткие справки из Википедии прямо в контексте ответа: «что такое X»", "author": "Z.ai port", "icon": "book", "url": "/plugins/wiki/zai-plugin.json" },
-    { "name": "Курс криптовалют", "description": "Свежие курсы BTC/ETH и других монет с CoinGecko: «сколько стоит биткоин»", "author": "Z.ai port", "icon": "globe", "url": "/plugins/crypto/zai-plugin.json" },
-    { "name": "QR-коды", "description": "Команда «/qr текст» — получите готовый QR-код картинкой в чате", "author": "Z.ai port", "icon": "code", "url": "/plugins/qr/zai-plugin.json" },
-    { "name": "Калькулятор+", "description": "Считает выражения локально и мгновенно: «(15*8-20)/4 =» без запроса к модели", "author": "Z.ai port", "icon": "calculator", "url": "/plugins/calc/zai-plugin.json" },
-    { "name": "Переводчик", "description": "Переводит любой текст: на русский, английский или язык по вашему выбору", "author": "Z.ai port", "icon": "translate", "url": "/plugins/translator/zai-plugin.json" },
-    { "name": "Грамматика", "description": "Проверяет и мягко правит орфографию и пунктуацию русского текста", "author": "Z.ai port", "icon": "pencil", "url": "/plugins/grammar/zai-plugin.json" },
-    { "name": "Деловая почта", "description": "Превращает пару строк в вежливое деловое письмо с темой и подписью", "author": "Z.ai port", "icon": "terminal", "url": "/plugins/email/zai-plugin.json" },
-    { "name": "Кубик и монетка", "description": "Броски кубика d6/d20 и монетка — честный рандом для игр и решений", "author": "Z.ai port", "icon": "star", "url": "/plugins/dice/zai-plugin.json" }
+    {
+      "name": "AI PPT — презентации",
+      "description": "Настоящие .pptx: титул, слайды с тезисами, заметки спикера. Кнопка скачивания прямо в чате",
+      "author": "Z.ai port",
+      "icon": "image",
+      "url": "/plugins/ppt/zai-plugin.json"
+    },
+    {
+      "name": "Краткие ответы",
+      "description": "Модель отвечает сжато и по делу: без воды, повторов и лишних вступлений",
+      "author": "Z.ai port",
+      "icon": "zap",
+      "url": "/plugins/terse/zai-plugin.json"
+    },
+    {
+      "name": "План перед ответом",
+      "description": "Сначала краткий план, потом полный структурированный ответ — порядок вместо каши",
+      "author": "Z.ai port",
+      "icon": "brain",
+      "url": "/plugins/prompt-enhancer/zai-plugin.json"
+    }
   ]
 }

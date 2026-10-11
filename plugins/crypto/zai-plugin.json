@@ -1,7 +1,0 @@
-{
-  "name": "Курс криптовалют",
-  "version": "1.0.0",
-  "description": "Свежие курсы с CoinGecko: биткоин, эфир и др.",
-  "author": "Z.ai port",
-  "entry": "plugin.js"
-}

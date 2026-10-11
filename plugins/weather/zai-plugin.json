@@ -1,7 +1,0 @@
-{
-  "name": "Погода",
-  "version": "1.0.0",
-  "description": "Подставляет свежий прогноз из open-meteo, когда спрашивают про погоду",
-  "author": "Z.ai port",
-  "entry": "plugin.js"
-}

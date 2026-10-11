@@ -1,7 +1,0 @@
-{
-  "name": "Википедия",
-  "version": "1.0.0",
-  "description": "Короткая справка из Википедии в контексте: «что такое X»",
-  "author": "Z.ai port",
-  "entry": "plugin.js"
-}
