@@ -1,57 +1,85 @@
-/* ZaiChat v18 — слой исправлений поверх v15.4/v16 (не трогает оригинальные стили)
-   1) фиксы «съезжающего» интерфейса на телефоне — теперь и на 320px всё влезает
+/* ZaiChat v19 — слой исправлений поверх v15.4/v16–v18 (не трогает оригинальные стили)
+   1) панель ввода крупнее, текст ВСЕХ кнопок одного размера (12px)
    2) производительность анимаций (без лагов) и память
    3) нормальный вид блока размышлений
    4) стили тостов, диалогов слоя и переключателя языка
    ВАЖНО: названия кнопок больше НЕ прячутся (ошибка v15.3 — кнопка «Плагины» без подписи) */
 
-/* ---------- 1. Тулбар ввода и шапка: всегда влезают в экран (320–480px), С НАЗВАНИЯМИ ----------
-   v18: раньше на 360px кнопки «Голосовой ввод» и «Отправить сообщение» уезжали за правый
-   край экрана (кнопка отправки оказывалась на x=378 при ширине 360) — теперь весь тулбар
-   помещается даже на 320px: проверено на 320/360/412. */
+/* ---------- 1. Тулбар ввода: влезает в экран (320–480px), ТЕКСТ ОДНОГО РАЗМЕРА ----------
+   v19: раньше поиск/плагины/размышления были 9px, модель 15px, остальные 16px —
+   каша. Теперь все подписи кнопок 12px (как нативный text-xs), иконки в пилюлях
+   14px, поле ввода минимум 2 строки (56px вместо 40px). */
 @media (max-width: 480px) {
   footer button { min-width: 0 !important; }
+
+  /* поле ввода: крупнее, комфортно печатать (было 1 строка ~40px) */
+  footer textarea {
+    min-height: 56px !important;
+    max-height: 160px !important;
+    padding-top: 12px !important;
+    padding-bottom: 8px !important;
+    font-size: 16px !important;
+    line-height: 1.45 !important;
+  }
+  /* сама панель ввода: чуть больше воздуха */
+  footer div.mx-auto.w-full {
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+  }
+
+  /* текстовые пилюли (Поиск / Плагины / Размышления): ЕДИНЫЙ стиль 12px */
   footer button[aria-label="Поиск"],
-  footer button[aria-label="Плагины"] {
-    padding-left: 0.15rem !important;
-    padding-right: 0.15rem !important;
-    gap: 0.1rem !important;
-    font-size: 9px !important;
-    letter-spacing: -0.01em !important;
+  footer button.z16-pill,
+  footer button[aria-label="Плагины"],
+  footer button[aria-label="Уровень размышлений"],
+  footer button[aria-label="Выбрать модель"] {
+    height: 34px !important;
+    padding-left: 7px !important;
+    padding-right: 7px !important;
+    gap: 4px !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    letter-spacing: 0 !important;
+    flex-shrink: 1 !important;
   }
   footer button[aria-label="Поиск"] svg,
-  footer button[aria-label="Плагины"] svg {
-    width: 12px !important;
-    height: 12px !important;
+  footer button.z16-pill svg,
+  footer button[aria-label="Плагины"] svg,
+  footer button[aria-label="Уровень размышлений"] svg,
+  footer button[aria-label="Выбрать модель"] svg {
+    width: 14px !important;
+    height: 14px !important;
+    flex-shrink: 0 !important;
   }
-  footer button[aria-label="Уровень размышлений"] {
-    padding-left: 0.2rem !important;
-    padding-right: 0.2rem !important;
-    gap: 0.1rem !important;
-    font-size: 9px !important;
-    max-width: 74px !important;
+  footer button[aria-label="Уровень размышлений"],
+  footer button[aria-label="Выбрать модель"] {
+    max-width: 112px !important;
     overflow: hidden !important;
     white-space: nowrap !important;
   }
-  footer button[aria-label="Уровень размышлений"] svg {
-    width: 12px !important;
-    height: 12px !important;
-    flex-shrink: 0 !important;
-  }
-  footer button[aria-label="Уровень размышлений"] span {
+  footer button[aria-label="Уровень размышлений"] span,
+  footer button[aria-label="Выбрать модель"] span {
     overflow: hidden !important;
     text-overflow: ellipsis !important;
     white-space: nowrap !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
   }
   footer button[aria-label="Прикрепить"],
   footer button[aria-label="Голосовой ввод"],
   footer button[aria-label="Отправить сообщение"] {
-    width: 30px !important;
-    height: 30px !important;
+    width: 32px !important;
+    height: 34px !important;
     padding: 0 !important;
     flex-shrink: 0 !important;
   }
-  footer div.flex.items-center.gap-0\.5 { gap: 0 !important; }
+  footer button[aria-label="Прикрепить"] svg,
+  footer button[aria-label="Голосовой ввод"] svg,
+  footer button[aria-label="Отправить сообщение"] svg {
+    width: 18px !important;
+    height: 18px !important;
+  }
+  footer div.flex.items-center.gap-0\.5 { gap: 1px !important; }
 }
 
 /* Очень узкие экраны (≤340px): дожимаем шапку и контейнер ввода, чтобы ничего не торчало */

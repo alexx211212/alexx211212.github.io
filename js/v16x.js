@@ -1,20 +1,21 @@
-/*! ZaiChat v18 — слой исправлений поверх v15.4/v16.
- *  Новое в v18 (по повторным жалобам владельца):
- *  1) Тулбар ввода больше не вылезает за экран: на 360px кнопки «Голосовой ввод» и
- *     «Отправить сообщение» уезжали за правый край (отправка оказывалась на x=378 при
- *     ширине 360) — теперь весь тулбар влезает даже на 320px (проверено 320/360/412).
- *  2) Подменю «Другие модели» открывалось на x=-227 — целиком за левым краем.
- *     Теперь ЛЮБОЙ popper зажимается в экран (clampPoppers) в кадре мутации.
- *  3) Плагины: каталог показывается ЦЕЛИКОМ сразу (15 карточек), без прятания
- *     за «Загрузить ещё» — владелец не находил свои плагины.
- *  Сохранено из v16: ровно 4 подсказки без клонов, «Перенести» без сжатия шапки,
- *     пилюля размышлений мгновенно и без дублей, меню моделей/размышлений приколоты
- *     вниз через aria-controls + rAF, вход через Z.ai, белая иконка APK.
+/*! ZaiChat v19 — слой исправлений поверх v15.4/v16–v18.
+ *  Новое в v19 (по жалобам владельца):
+ *  1) Уровни размышлений называются «Быстрое / Глубокое / Ультра» — и в меню,
+ *     и на пилюле после выбора (раньше меню писало Низкое/Среднее/Высокое,
+ *     а пилюля прыгала на Высокое/Среднее).
+ *  2) Панель ввода крупнее (поле ~2 строки вместо одной), текст ВСЕХ кнопок
+ *     одного размера (12px) — раньше поиск/плагины были 9px, остальные 12–16px.
+ *  3) Подменю «Другие модели»: открывается СРАЗУ вниз под пунктом (без
+ *     «сначала вправо, потом вниз» — сдвиг теперь в том же кадре, до отрисовки),
+ *     повторный тап по «Другие модели» сворачивает подменю обратно.
+ *  4) Вход: гостевой токен отсекается на всех путях (кнопка гостя скрыта,
+ *     мост токена и опрос localStorage игнорируют роль guest).
+ *  Сохранено из v16–v18: 4 подсказки, «Перенести», меню вниз, автономный APK.
  *  Работает поверх приложения и не мешает ему: всё в try/catch. */
 (function () {
   'use strict';
   if (window.__z16x) return;
-  window.__z16x = { v: '18' };
+  window.__z16x = { v: '19' };
 
   /* ================= утилиты ================= */
   function $(s, r) { try { return (r || document).querySelector(s); } catch (_) { return null; } }
@@ -55,7 +56,7 @@
   var DICT_EN = {
     'Уровень размышлений': 'Thinking level',
     'Размышления': 'Think',
-    'Низкое': 'Low', 'Среднее': 'Medium', 'Высокое': 'High', 'Выключить': 'Off',
+    'Быстрое': 'Fast', 'Глубокое': 'Deep', 'Ультра': 'Ultra', 'Выключить': 'Off',
     'Поделиться чатом': 'Share chat', 'Перенести в новый чат': 'Continue in new chat',
     'Плагины': 'Plugins', 'Поиск': 'Search', 'Настройки': 'Settings',
     'Аккаунт Z.ai': 'Z.ai account', 'Чаты': 'Chats', 'Задачи': 'Tasks',
@@ -342,19 +343,19 @@
     } catch (_) {}
   }
 
-  /* ================= 3. рассуждения: Низкое/Среднее/Высокое + вниз + автозакрытие ================= */
-  /* нативные подписи v15: Лоу/Медиум/Хай/Выключить — меняем на понятную шкалу.
-     Смысл по ТЗ: низкое = быстрое, среднее = глубокое, высокое = ультра. */
+  /* ================= 3. рассуждения: Быстрое/Глубокое/Ультра + вниз + автозакрытие ================= */
+  /* нативные подписи v15: Лоу/Медиум/Хай/Выключить — меняем на шкалу владельца:
+     быстрое = Лоу, глубокое = Медиум, ультра = Хай (v19: и в меню, и на пилюле). */
   var THINK_RU = [
-    { from: 'Лоу', to: 'Низкое', desc: 'Быстро — минимальные размышления' },
-    { from: 'Медиум', to: 'Среднее', desc: 'Глубоко — тщательнее и точнее' },
-    { from: 'Хай', to: 'Высокое', desc: 'Ультра — максимум качества' },
+    { from: 'Лоу', to: 'Быстрое', desc: 'Минимум размышлений — отвечает быстрее всех' },
+    { from: 'Медиум', to: 'Глубокое', desc: 'Тщательнее и точнее' },
+    { from: 'Хай', to: 'Ультра', desc: 'Максимум качества' },
     { from: 'Выключить', to: 'Выключить', desc: 'Отвечает сразу, без размышлений' }
   ];
   var THINK_EN = [
-    { from: 'Лоу', to: 'Low', desc: 'Fast — minimal reasoning' },
-    { from: 'Медиум', to: 'Medium', desc: 'Deep — more thorough and precise' },
-    { from: 'Хай', to: 'High', desc: 'Ultra — maximum quality' },
+    { from: 'Лоу', to: 'Fast', desc: 'Minimal reasoning — fastest answers' },
+    { from: 'Медиум', to: 'Deep', desc: 'More thorough and precise' },
+    { from: 'Хай', to: 'Ultra', desc: 'Maximum quality' },
     { from: 'Выключить', to: 'Off', desc: 'Answers instantly, no reasoning' }
   ];
   /* нативная пилюля: Ультра/Глубокие/Размышления(low&off) — помним, что выбрано */
@@ -439,24 +440,31 @@
      Нативные метки пилюли: Ультра / Глубокие / Размышления (и Лоу/Медиум/Хай).
      После выбора сайт сначала копирует подпись из нашего меню (правильную), потом
      перерисовывает нативную (неправильную) — лечим в кадре мутации, а не по таймеру. */
-  var PILL_KNOWN = ['Ультра', 'Глубокие', 'Лоу', 'Медиум', 'Хай', 'Быстрые', 'Быстрое',
+  var PILL_KNOWN = ['Ультра', 'Глубокие', 'Глубокое', 'Лоу', 'Медиум', 'Хай', 'Быстрые', 'Быстрое',
     'Размышления', 'Высокое', 'Среднее', 'Низкое', 'High', 'Medium', 'Low', 'Think', 'Off', 'Выключить'];
+  /* v19: пилюля показывает то же, что выбрали в меню: Быстрое/Глубокое/Ультра.
+     «Размышления» в выключенном состоянии остаётся как есть (нативная подпись off). */
   function pillWant(t) {
     if (isEn()) {
-      if (t === 'Ультра' || t === 'Высокое' || t === 'Хай') return 'High';
-      if (t === 'Глубокие' || t === 'Среднее' || t === 'Медиум') return 'Medium';
-      if (t === 'Лоу' || t === 'Низкое' || t === 'Быстрые' || t === 'Быстрое') return 'Low';
-      if (t === 'Размышления' || t === 'Think') return thinkChosen === 'low' ? 'Low' : 'Think';
+      if (t === 'Ультра' || t === 'Высокое' || t === 'Хай') return 'Ultra';
+      if (t === 'Глубокие' || t === 'Глубокое' || t === 'Среднее' || t === 'Медиум') return 'Deep';
+      if (t === 'Лоу' || t === 'Низкое' || t === 'Быстрые' || t === 'Быстрое') return 'Fast';
+      if (t === 'Размышления' || t === 'Think') {
+        if (thinkChosen === 'low') return 'Fast';
+        if (thinkChosen === 'medium') return 'Deep';
+        if (thinkChosen === 'high') return 'Ultra';
+        return 'Think';
+      }
       if (t === 'Выключить') return 'Off';
       return null;
     }
-    if (t === 'Ультра' || t === 'High' || t === 'Хай') return 'Высокое';
-    if (t === 'Глубокие' || t === 'Medium' || t === 'Медиум') return 'Среднее';
-    if (t === 'Лоу' || t === 'Low' || t === 'Быстрые' || t === 'Быстрое') return 'Низкое';
+    if (t === 'Ультра' || t === 'High' || t === 'Высокое' || t === 'Хай') return 'Ультра';
+    if (t === 'Глубокие' || t === 'Medium' || t === 'Среднее' || t === 'Медиум') return 'Глубокое';
+    if (t === 'Лоу' || t === 'Low' || t === 'Низкое' || t === 'Быстрые') return 'Быстрое';
     if (t === 'Размышления' || t === 'Think') {
-      if (thinkChosen === 'low') return 'Низкое';
-      if (thinkChosen === 'medium') return 'Среднее';
-      if (thinkChosen === 'high') return 'Высокое';
+      if (thinkChosen === 'low') return 'Быстрое';
+      if (thinkChosen === 'medium') return 'Глубокое';
+      if (thinkChosen === 'high') return 'Ультра';
       return 'Размышления';
     }
     return null;
@@ -538,18 +546,22 @@
       var vw = window.innerWidth, vh = window.innerHeight;
       var wr = pair.wr;
       var cw = wr.offsetWidth || 260;
+      var ch = wr.offsetHeight || 200;
       var left = Math.round(Math.max(8, Math.min(r.left, vw - cw - 8)));
       var top = Math.round(r.bottom + 8);
       var maxH = vh - top - 12;
-      if (maxH < 140) { /* совсем низко (клавиатура) — прижмём к низу экрана с прокруткой */
-        maxH = Math.max(140, Math.round(vh * 0.45));
-        top = vh - maxH - 8;
+      if (maxH < 140) {
+        /* снизу не влезает (клавиатура/низ экрана) — открываем ВВЕРХ от триггера,
+           а не прижимаем к низу поверх поля ввода (v19) */
+        var bottom = Math.round(r.top - 6);
+        maxH = Math.max(140, bottom - 12);
+        top = Math.max(8, bottom - Math.min(ch, maxH));
       }
       var st = wr.style;
       st.setProperty('top', top + 'px', 'important');
       st.setProperty('left', left + 'px', 'important');
       st.setProperty('transform', 'none', 'important');
-      st.setProperty('max-height', maxH + 'px', 'important');
+      st.setProperty('max-height', Math.round(Math.min(maxH, vh - 16)) + 'px', 'important');
       st.setProperty('overflow-y', 'auto', 'important');
       wr.classList.add('z16-pinned');
     } catch (_) {}
@@ -562,67 +574,131 @@
       });
     });
   }
-  /* --- v18: зажим ЛЮБОГО всплывающего меню в экран ---
-     Radix умеет открывать подменю («Другие модели») за краем: на телефоне 360px
-     подменю оказывалось на x=-227, виден был только край.
-     КАК МОЖНО (бисекция подтвердила): нельзя трогать top/left + transform поппера
-     во время его позиционирования — подменю тогда вообще не открывается.
-     Поэтому: ждём 120мс (Radix сам всё расставил), затем сдвигаем ТОЛЬКО
-     трансформом (дельтой к текущему переводу), top/left не трогаем вовсе. */
-  function clampPoppers() {
-    var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
-    if (!vw || !vh) return;
-    $$('[data-radix-popper-content-wrapper]').forEach(function (wr) {
-      if (wr.__z16cT) return; /* таймер уже стоит */
+  /* --- v19: подменю открывается СРАЗУ в финальной позиции, без «сначала вправо, потом вниз» ---
+     v18 ждал 120мс и сдвигал трансформом — пользователь ВИДЕЛ этот прыжок.
+     Теперь: в кадре появления меню прячем (visibility:hidden), в следующем кадре
+     (Radix уже всё расставил) ставим финальное место ПОД якорем и показываем.
+     Наведённого прыжка нет: виден только финальный кадр. */
+  function placeWr(wr) {
+    try {
+      var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+      if (!vw || !vh) return;
+      var w = wr.offsetWidth || wr.getBoundingClientRect().width || 260;
+      var h = wr.offsetHeight || wr.getBoundingClientRect().height || 200;
+      var left = null, top = null;
+      /* якорь: у контента есть id, у триггера — aria-controls на этот id */
+      var content = wr.firstElementChild;
+      var cid = content && content.id;
+      var anchor = cid ? $('[aria-controls="' + cid + '"]') : null;
+      if (anchor && wr.classList.contains('z16-pinned')) return; /* пиннит pinFrame */
+      if (anchor) {
+        var ar = anchor.getBoundingClientRect();
+        if (ar.width > 0) {
+          left = Math.round(Math.max(8, Math.min(ar.left, vw - w - 8)));
+          top = Math.round(ar.bottom + 6);
+          var maxH = vh - top - 12;
+          if (maxH < 140) { /* снизу не влезает — раскрываем ВВЕРХ от якоря */
+            var bottom = Math.round(ar.top - 6);
+            maxH = Math.max(140, bottom - 12);
+            top = Math.max(8, bottom - Math.min(h, maxH));
+          }
+          if (top + h > vh - 8) h = vh - 8 - top;
+          wr.style.setProperty('max-height', Math.round(Math.max(140, Math.min(h, maxH, vh - 16))) + 'px', 'important');
+          wr.style.setProperty('overflow-y', 'auto', 'important');
+        }
+      }
+      if (left === null) {
+        var r = wr.getBoundingClientRect();
+        left = Math.round(Math.min(Math.max(r.left, 8), vw - 8 - w));
+        top = Math.round(Math.min(Math.max(r.top, 8), vh - 8 - h));
+      }
+      var st = wr.style;
+      st.setProperty('left', left + 'px', 'important');
+      st.setProperty('top', top + 'px', 'important');
+      st.setProperty('transform', 'none', 'important');
+    } catch (_) {}
+  }
+  function ensurePlaced(wr) {
+    try {
       var r = wr.getBoundingClientRect();
       if (!(r.width > 0) || !(r.height > 0)) return;
-      var out = r.left < 8 || r.right > vw - 8 || r.top < 8 || r.bottom > vh - 8;
-      if (!out) return;
-      wr.__z16cT = setTimeout(function () {
-        wr.__z16cT = 0;
-        try {
-          var r2 = wr.getBoundingClientRect();
-          if (!(r2.width > 0) || !(r2.height > 0)) return;
-          var vw2 = document.documentElement.clientWidth, vh2 = document.documentElement.clientHeight;
-          var w = r2.width, h = r2.height;
-          /* базовый зажим: текущее место, но внутри экрана */
-          var nx = Math.min(Math.max(r2.left, 8), vw2 - 8 - w);
-          var ny = Math.min(Math.max(r2.top, 8), vh2 - 8 - h);
-          nx = Math.max(8, Math.round(nx)); ny = Math.max(8, Math.round(ny));
-          /* подменю с якорем (aria-controls на триггере) размещаем ПОД ЯКОРЕМ —
-             как в мобильном ChatGPT: подменю продолжение меню, а не окно сбоку.
-             ВАЖНО: новое место не должно перекрывать сам якорь, иначе Radix
-             закрывает подменю (синтетические hover-события по краю). */
-          var content = wr.firstElementChild;
-          var cid = content && content.id;
-          var anchor = cid ? $('[aria-controls="' + cid + '"]') : null;
-          if (anchor) {
-            var ar = anchor.getBoundingClientRect();
-            if (ar.width > 0) {
-              var ax = Math.min(Math.max(Math.round(ar.left), 8), vw2 - 8 - w);
-              var ay = Math.round(ar.bottom + 6);
-              ay = Math.min(Math.max(ay, 8), vh2 - 8 - h);
-              var inter = !(ax + w < ar.left || ax > ar.right || ay + h < ar.top || ay > ar.bottom);
-              if (!inter) { nx = ax; ny = ay; }
-            }
-          }
-          if (Math.abs(nx - r2.left) < 1 && Math.abs(ny - r2.top) < 1) return;
-          /* сдвиг ТОЛЬКО трансформом: top/left не трогаем (их борьба с
-             позиционированием Radix не даёт подменю открыться), к текущему
-             переводу прибавляем дельту до нужной точки */
-          var mt = /matrix\(([^)]+)\)/.exec(getComputedStyle(wr).transform || '');
-          var tx = 0, ty = 0;
-          if (mt) { var pp = mt[1].split(','); tx = parseFloat(pp[4]) || 0; ty = parseFloat(pp[5]) || 0; }
-          tx += nx - Math.round(r2.left); ty += ny - Math.round(r2.top);
-          wr.style.setProperty('transform', 'translate(' + Math.round(tx) + 'px,' + Math.round(ty) + 'px)', 'important');
-          wr.style.setProperty('max-height', Math.round(Math.min(h, vh2 - 16)) + 'px', 'important');
-          wr.style.setProperty('overflow-y', 'auto', 'important');
-        } catch (_) {}
-      }, 120);
-    });
+      if (!wr.__z16seen) {
+        /* первый кадр жизни меню: прячем, ставим финальное место, показываем */
+        wr.__z16seen = true;
+        wr.style.setProperty('visibility', 'hidden', 'important');
+        requestAnimationFrame(function () {
+          try {
+            placeWr(wr);
+            wr.style.setProperty('visibility', 'visible', 'important');
+          } catch (_) { try { wr.style.setProperty('visibility', 'visible', 'important'); } catch (_2) {} }
+        });
+        return;
+      }
+      /* повторные вызовы (скролл и т.п.): зажимаем, если снова вылезло за экран */
+      var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+      if (r.left < 8 || r.right > vw - 8 || r.top < 8 || r.bottom > vh - 8) placeWr(wr);
+    } catch (_) {}
   }
-  /* при скролле подменю могло снова выехать за край — перезажимаем */
+  function clampPoppers() {
+    var wrs = $$('[data-radix-popper-content-wrapper]');
+    for (var i = 0; i < wrs.length; i++) {
+      if (wrs[i].classList && wrs[i].classList.contains('z16-pinned')) continue;
+      ensurePlaced(wrs[i]);
+    }
+  }
+  /* при скролле меню могло снова выехать за край — перезажимаем */
   try { window.addEventListener('scroll', function () { try { clampPoppers(); } catch (_) {} }, { capture: true, passive: true }); } catch (_) {}
+  /* --- v19: повторный тап по открытому подменю-пункту («Другие модели») сворачивает его ---
+     Radix на тач-экране не закрывает подменю по повторному тапу (только весь список) —
+     синтезируем уход курсора, на который Radix реагирует сворачиванием. */
+  function subToggleGuard() {
+    if (window.__z16subT) return;
+    window.__z16subT = true;
+    document.addEventListener('pointerdown', function (e) {
+      try {
+        var el = e.target && e.target.closest ? e.target.closest('[role="menuitem"]') : null;
+        if (!el || !el.closest('[data-radix-popper-content-wrapper]')) return;
+        var open = el.getAttribute('aria-expanded') === 'true' || el.getAttribute('data-state') === 'open';
+        if (!open) return;
+        var o = { bubbles: true, pointerId: e.pointerId || 1, pointerType: 'mouse', isPrimary: true, clientX: e.clientX, clientY: e.clientY };
+        el.dispatchEvent(new PointerEvent('pointerout', o));
+        el.dispatchEvent(new PointerEvent('pointerleave', o));
+        /* Radix закрывает подменю с задержкой-грацией — даём ему кадр */
+        setTimeout(function () {
+          try {
+            var o2 = { bubbles: true, pointerId: e.pointerId || 1, pointerType: 'mouse', isPrimary: true, clientX: e.clientX, clientY: e.clientY };
+            el.dispatchEvent(new PointerEvent('pointerout', o2));
+            el.dispatchEvent(new PointerEvent('pointerleave', o2));
+          } catch (_) {}
+        }, 60);
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        vibrate(6);
+      } catch (_) {}
+    }, true);
+  }
+  /* --- v19: страховка закрытия — тап мимо меню, если Radix сам не закрыл за 150мс --- */
+  function outsideCloseGuard() {
+    if (window.__z16outC) return;
+    window.__z16outC = true;
+    document.addEventListener('pointerdown', function (e) {
+      try {
+        var wrs = $$('[data-radix-popper-content-wrapper]');
+        if (!wrs.length) return;
+        for (var i = 0; i < wrs.length; i++) {
+          if (wrs[i].getBoundingClientRect().width > 0 && wrs[i].contains(e.target)) return;
+        }
+        var t = e.target;
+        if (t && t.closest && t.closest('button, [role="menuitem"], [aria-haspopup], [aria-expanded], textarea, input')) return;
+        setTimeout(function () {
+          try {
+            var still = $$('[data-radix-popper-content-wrapper]').filter(function (w) { return w.getBoundingClientRect().width > 0; });
+            if (still.length) document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+          } catch (_) {}
+        }, 150);
+      } catch (_) {}
+    }, true);
+  }
   var pinRaf = 0, pinIdle = 0;
   function pinFrame() {
     pinRaf = 0;
@@ -1446,9 +1522,23 @@
     });
   }
 
+  /* --- v19: единый вид пилюль — «Поиск» в снапшоте без aria-label, помечаем классом --- */
+  function fixPills() {
+    var fb = $$('footer button');
+    for (var i = 0; i < fb.length; i++) {
+      var t = (fb[i].textContent || '').trim();
+      if ((t === 'Поиск' || t === 'Search') && !fb[i].classList.contains('z16-pill')) {
+        fb[i].classList.add('z16-pill');
+      }
+    }
+  }
+
   /* ================= движок наблюдения ================= */
+  try { subToggleGuard(); } catch (_) {}
+  try { outsideCloseGuard(); } catch (_) {}
   var moT = null;
   function sweep() {
+    try { fixPills(); } catch (_) {}
     try { fixThinkMenu(); } catch (_) {}
     try { fixThinkPill(); } catch (_) {}
     try { kickPin(); } catch (_) {}
