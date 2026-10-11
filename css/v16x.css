@@ -1,0 +1,117 @@
+/* ZaiChat v15.3 — слой исправлений поверх v15 (не трогает оригинальные стили)
+   1) фиксы «съезжающего» интерфейса на телефоне
+   2) производительность анимаций
+   3) стили тостов и состояний */
+
+/* ---------- 1. Тулбар ввода: не вылезает за экран на узких телефонах ---------- */
+@media (max-width: 480px) {
+  /* «Поиск» и «Плагины» становятся иконками (подписи скрыты, aria-label остаётся) */
+  footer button[aria-label="Поиск"],
+  footer button[aria-label="Плагины"] {
+    font-size: 0 !important;
+    gap: 0 !important;
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+  }
+  footer button[aria-label="Уровень размышлений"] {
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+  }
+  footer div.flex.items-center.gap-0\.5 { gap: 0.125rem !important; }
+}
+
+/* Любые всплывающие меню не шире экрана и с прокруткой по высоте
+   (think-меню больше не «съезжает» на низких экранах) */
+[data-radix-popper-content-wrapper] {
+  max-width: calc(100vw - 16px) !important;
+  max-height: 72dvh !important;
+  overflow-y: auto !important;
+}
+
+/* ---------- 2. Плавность на телефонах ---------- */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+* { -webkit-tap-highlight-color: transparent; }
+
+@media (max-width: 820px) {
+  /* постоянная анимация свечения поля = главная причина лагов: делаем статичной */
+  .input-glow {
+    animation: none !important;
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--primary) 30%, transparent),
+      0 0 12px color-mix(in srgb, var(--primary) 12%, transparent) !important;
+  }
+  /* вход элементов короче */
+  .msg-in { animation-duration: 0.18s !important; }
+  /* контент-страницы скроллятся своим слоем без рывков */
+  main.nice-scroll { overscroll-behavior: contain; }
+}
+
+/* ---------- 3. Подсказки: 2 колонки на телефоне (влезает больше вариантов) ---------- */
+@media (max-width: 640px) {
+  main .grid.grid-cols-1[class*="max-w-md"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  main .grid.grid-cols-1[class*="max-w-md"] > button { min-height: 3.25rem; }
+}
+
+/* ---------- 4. Тосты приложения (перегрузка / ответ готов / статус) ---------- */
+#z16-toasts {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(92vw, 430px);
+  pointer-events: none;
+}
+.z16-toast {
+  background: #202024;
+  color: #f4f4f5;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  padding: 10px 14px;
+  font: 500 13px/1.45 var(--font-sans, system-ui, sans-serif);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.z16-toast.z16-show { opacity: 1; transform: none; }
+@media (prefers-color-scheme: light) {
+  .z16-toast {
+    background: #ffffff;
+    color: #18181b;
+    border-color: rgba(0, 0, 0, 0.1);
+    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.16);
+  }
+}
+
+/* ---------- 5. Микрофон: состояние записи ---------- */
+.z16-rec svg { color: #ef4444 !important; }
+.z16-rec { animation: z16-pulse 1.4s ease-in-out infinite; }
+@keyframes z16-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* ---------- 6. Кнопка «Загрузить ещё» в плагинах ---------- */
+.z16-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  border-radius: 14px;
+  border: 1px dashed rgba(245, 158, 11, 0.5);
+  color: #f59e0b;
+  font: 600 13px/1.2 var(--font-sans, system-ui, sans-serif);
+  background: transparent;
+  cursor: pointer;
+  margin-top: 2px;
+}
+.z16-more:active { transform: scale(0.99); }

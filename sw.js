@@ -5,7 +5,7 @@
  *  - Статика (icons, manifest): cache-first
  *  - /api/*: network-only (стриминг не кэшируем)
  */
-const VERSION = 'v15';
+const VERSION = 'v15.3';
 const SHELL_CACHE = `shell-${VERSION}`;
 const ASSET_CACHE = `assets-${VERSION}`;
 const OFFLINE_URL = '/offline.html';
@@ -19,6 +19,8 @@ const SHELL_ASSETS = [
   '/icons/maskable-192.png',
   '/icons/maskable-512.png',
   '/favicon.png',
+  '/css/v16x.css',
+  '/js/v16x.js',
 ];
 
 self.addEventListener('install', (event) => {

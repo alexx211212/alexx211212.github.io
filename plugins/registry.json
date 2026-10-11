@@ -22,6 +22,69 @@
       "author": "Z.ai port",
       "icon": "brain",
       "url": "/plugins/prompt-enhancer/zai-plugin.json"
+    },
+    {
+      "name": "Калькулятор и конвертер",
+      "description": "Считает пошагово и без ошибок: математика, проценты, конвертация единиц и валют (с пометкой, что курсы приблизительные)",
+      "author": "Z.ai port",
+      "icon": "calculator",
+      "url": "/plugins/calculator/zai-plugin.json"
+    },
+    {
+      "name": "Переводчик",
+      "description": "Переводит на любой язык, сохраняя тон и смысл. Даёт 1-2 альтернативы для важных фраз",
+      "author": "Z.ai port",
+      "icon": "translate",
+      "url": "/plugins/translator/zai-plugin.json"
+    },
+    {
+      "name": "Грамматика и стиль",
+      "description": "Исправляет грамматику, пунктуацию и стиль текста, сохраняя голос автора. Показывает, что именно изменил",
+      "author": "Z.ai port",
+      "icon": "pencil",
+      "url": "/plugins/grammar/zai-plugin.json"
+    },
+    {
+      "name": "Объяснение кода",
+      "description": "Объясняет код простыми словами построчно, находит баги и подсказывает улучшения",
+      "author": "Z.ai port",
+      "icon": "code",
+      "url": "/plugins/code-explainer/zai-plugin.json"
+    },
+    {
+      "name": "Генератор идей",
+      "description": "Выдаёт 10 идей по теме: от безопасных до смелых, с однострочным пояснением к каждой",
+      "author": "Z.ai port",
+      "icon": "star",
+      "url": "/plugins/ideas/zai-plugin.json"
+    },
+    {
+      "name": "Репетитор",
+      "description": "Объясняет темы как учитель: просто, с примерами, и задаёт 3 вопроса для самопроверки",
+      "author": "Z.ai port",
+      "icon": "book",
+      "url": "/plugins/tutor/zai-plugin.json"
+    },
+    {
+      "name": "Гид по городам",
+      "description": "Маршруты по городам на нужное число дней: что посмотреть, бюджет, местная еда и лайфхаки",
+      "author": "Z.ai port",
+      "icon": "globe",
+      "url": "/plugins/city-guide/zai-plugin.json"
+    },
+    {
+      "name": "Поиск и факты",
+      "description": "Ищет актуальную информацию в интернете, отвечает с источниками и помечает степень уверенности",
+      "author": "Z.ai port",
+      "icon": "search",
+      "url": "/plugins/fact-check/zai-plugin.json"
+    },
+    {
+      "name": "Письма и документы",
+      "description": "Составляет готовые к отправке письма, заявления и официальные документы в правильном формате",
+      "author": "Z.ai port",
+      "icon": "zap",
+      "url": "/plugins/letters/zai-plugin.json"
     }
   ]
 }
