@@ -598,6 +598,8 @@ async function renderIconGrid() {
 
 /* ================= СТАРТ ================= */
 async function boot() {
+  // Service Worker: офлайн-оболочка + network-first для js/css (свежий код после каждого деплоя)
+  if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('/sw.js').catch(() => {}); } catch (_) {} }
   document.body.classList.toggle('no-anim', !store.getSettings().anim);
   const shared = handleShareRoute();
   if (shared) return;
