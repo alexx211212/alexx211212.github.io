@@ -1,105 +1,40 @@
-/* Z.ai Service Worker
- * Стратегии:
- *  - App shell (префетч): cache-first
- *  - Навигация: network-first -> cache -> /offline
- *  - Статика (icons, manifest): cache-first
- *  - /api/*: network-only (стриминг не кэшируем)
- */
-const VERSION = 'v15';
-const SHELL_CACHE = `shell-${VERSION}`;
-const ASSET_CACHE = `assets-${VERSION}`;
-const OFFLINE_URL = '/offline.html';
-
-const SHELL_ASSETS = [
-  '/',
-  OFFLINE_URL,
-  '/manifest.json',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-  '/icons/maskable-192.png',
-  '/icons/maskable-512.png',
-  '/favicon.png',
+/* ZaiChat v16 — Service Worker: офлайн-оболочка, сеть-первая для данных */
+const VERSION = 'v16.1';
+const SHELL = [
+  '/', '/index.html', '/css/app.css?v=16.1',
+  '/js/app.js?v=16.1', '/js/api.js', '/js/store.js', '/js/md.js', '/js/ppt.js', '/js/plugins.js', '/js/chat.js',
+  '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png', '/offline.html'
 ];
 
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    (async () => {
-      const cache = await caches.open(SHELL_CACHE);
-      await cache.addAll(SHELL_ASSETS);
-      await self.skipWaiting();
-    })()
-  );
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()).catch(() => {}));
 });
 
-self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    (async () => {
-      const keys = await caches.keys();
-      await Promise.all(
-        keys
-          .filter((k) => k.startsWith('shell-') && k !== SHELL_CACHE)
-          .concat(keys.filter((k) => k.startsWith('assets-') && k !== ASSET_CACHE))
-          .map((k) => caches.delete(k))
-      );
-      await self.clients.claim();
-    })()
-  );
+self.addEventListener('activate', (e) => {
+  e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 
-self.addEventListener('fetch', (event) => {
-  const { request } = event;
-  if (request.method !== 'GET') return; // POST /api/chat — всегда сеть
-
-  const url = new URL(request.url);
-  if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith('/api/')) return; // network-only
-
-  // Навигация: сеть первая, офлайн-фолбэк
-  if (request.mode === 'navigate') {
-    event.respondWith(
-      (async () => {
-        try {
-          const fresh = await fetch(request);
-          const cache = await caches.open(SHELL_CACHE);
-          cache.put('/', fresh.clone());
-          return fresh;
-        } catch {
-          const cache = await caches.open(SHELL_CACHE);
-          return (
-            (await cache.match('/')) ||
-            (await cache.match(OFFLINE_URL)) ||
-            new Response('Офлайн', { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
-          );
-        }
-      })()
+self.addEventListener('fetch', (e) => {
+  const url = new URL(e.request.url);
+  if (e.request.method !== 'GET') return;
+  // данные z.ai — только сеть (стриминг и аккаунт)
+  if (url.host === 'chat.z.ai') return;
+  // навигация: сеть → кэш → /offline
+  if (e.request.mode === 'navigate') {
+    e.respondWith(
+      fetch(e.request).then(r => { const cp = r.clone(); caches.open(VERSION).then(c => c.put('/', cp)); return r; })
+        .catch(() => caches.match('/').then(r => r || caches.match('/offline.html')))
     );
     return;
   }
-
-  // Статика: cache-first с фоновым обновлением
-  if (
-    url.pathname.startsWith('/icons/') ||
-    url.pathname.startsWith('/_next/static/') ||
-    url.pathname === '/manifest.json' ||
-    url.pathname === '/favicon.png'
-  ) {
-    event.respondWith(
-      (async () => {
-        const cache = await caches.open(ASSET_CACHE);
-        const cached = await cache.match(request);
-        const network = fetch(request)
-          .then((res) => {
-            if (res.ok) cache.put(request, res.clone());
-            return res;
-          })
-          .catch(() => cached);
-        return cached || network;
-      })()
-    );
-  }
-});
-
-// Сообщения от клиента (например, запрос на немедленное обновление)
-self.addEventListener('message', (event) => {
-  if (event.data === 'SKIP_WAITING') self.skipWaiting();
+  // прочее: кэш-первая с фоновым обновлением
+  e.respondWith(
+    caches.match(e.request).then(cached => {
+      const net = fetch(e.request).then(r => {
+        if (r && r.ok && url.origin === location.origin) caches.open(VERSION).then(c => c.put(e.request, r.clone()));
+        return r;
+      }).catch(() => cached);
+      return cached || net;
+    })
+  );
 });

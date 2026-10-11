@@ -1,0 +1,7 @@
+{
+  "name": "Переводчик",
+  "version": "1.0.0",
+  "description": "Перевод текста на нужный язык с сохранением стиля",
+  "author": "Z.ai port",
+  "entry": "plugin.js"
+}

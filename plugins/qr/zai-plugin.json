@@ -1,0 +1,7 @@
+{
+  "name": "QR-коды",
+  "version": "1.0.0",
+  "description": "Команда «/qr текст» — QR-код картинкой в чате",
+  "author": "Z.ai port",
+  "entry": "plugin.js"
+}

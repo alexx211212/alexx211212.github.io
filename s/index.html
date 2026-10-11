@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>Займ… открываем чат</title>
+<script>
+// /s/<id> — единая ссылка шеринга: официальный сайт и приложение открывают её одинаково
+(function(){
+  var m = location.pathname.match(/^\/s\/([A-Za-z0-9_-]+)/);
+  if (m) location.replace('https://chat.z.ai/s/' + m[1]);
+  else location.replace('/');
+})();
+</script></head><body style="background:#17171a;color:#a6a6b3;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100dvh;margin:0">Открываем чат…</body></html>
