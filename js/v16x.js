@@ -1,23 +1,100 @@
-/*! ZaiChat v20 — слой исправлений поверх v15.4/v16–v19.
- *  Новое в v20 (по жалобам владельца):
- *  1) АНТИ-МИГАНИЕ: всплывающие меню (размышления, модели, чат-меню) и подсказки
- *     появляются уже ГОТОВЫМИ — первый кадр скрыт, переименование и позиция
- *     применяются до показа. Нативные «Лоу/Медиум/Хай» больше не видны.
- *  2) «Выключить» в размышлениях сразу возвращает пилюлю «Размышления»
- *     (раньше иногда оставалось «Быстрое»).
- *  3) Подсказки сменяются раз в НЕСКОЛЬКО ЧАСОВ и сохраняются между запусками;
- *     при переключении чат↔агент — без мигания.
- *  4) Плагины: кнопка «Ещё» — карточки показываются постепенно; в каталоге
- *     больше плагинов.
- *  5) Боковое меню открывается быстрее (короче анимации, легче обработка мутаций).
- *  6) ЭКСПЕРИМЕНТ: «Локальные ИИ» в боковом меню — чат без интернета на маленьких
- *     моделях (выбор по объёму ОЗУ, скачивание, качество/скорость не гарантированы).
- *  Сохранено из v16–v19: Быстрое/Глубокое/Ультра, крупная панель ввода, меню вниз,
- *  «Поделиться»/«Перенести», вход без гостя, автономный APK. Всё в try/catch. */
+/*! ZaiChat v21 — слой исправлений поверх v15.4/v16–v20.
+ *  Новое в v21 (по жалобам владельца):
+ *  1) ВХОД: новые гостевые сессии Z.ai не имеют role:'guest' в токене (только
+ *     email guest-…@guest.com) — из-за этого гостевой акк проходил все фильтры.
+ *     Теперь гость отсекается по email/имени И на уровне ответа /api/v1/auths/.
+ *     Плюс подсказка, если Z.ai открылся чатом вместо входа (Sign in вверху).
+ *  2) СИНХРОНИЗАЦИЯ ЧАТОВ: сайт-зеркало определял агентные чаты только по
+ *     models[0]='general_agent', а сайт Z.ai теперь помечает их полями
+ *     type/flags/bot_id → агентные чаты падали во вкладку «Чат». Мы чиним
+ *     ответ /api/v1/chats/{id} на лету + перезаписываем неправильные режимы
+ *     уже импортированных чатов при запуске.
+ *  3) ЛАГИ ПРИ МНОГИХ ЧАТАХ: хранилище zai-web-v1 записывало ВЕСЬ список чатов
+ *     в localStorage на каждое изменение — теперь записи сливаются (дебаунс),
+ *     наблюдатель мутаций легче, фоновый обход реже.
+ *  4) Мигание «Других моделей» при закрытии: кадры анимации выхода отключены.
+ *  5) «Локальные ИИ»: список категорий ОЗУ (2/4/6/8/12/16/24 ГБ), раскрывается
+ *     вниз плавно, у каждой категории несколько моделей (24 вместо 9); починена
+ *     прокрутка на старых WebView (запас без dvh).
+ *  Сохранено из v16–v20: Быстрое/Глубокое/Ультра, анти-мигание открытия, крупная
+ *  панель ввода, меню вниз, «Поделиться»/«Перенести», подсказки раз в 3 часа,
+ *  «Ещё» в плагинах, автономный APK. Всё в try/catch. */
 (function () {
   'use strict';
   if (window.__z16x) return;
-  window.__z16x = { v: '20' };
+  window.__z16x = { v: '21' };
+
+  /* ================= v21: хранилище — гость, режимы чатов, производительность =================
+     Сайт-зеркало хранит всё состояние (чаты, аккаунт) в localStorage «zai-web-v1»
+     и на КАЖДОЕ изменение состояния записывает его туда целиком. С сотнями чатов
+     это мегабайты JSON на каждое нажатие — главный источник лагов. Сливаем записи. */
+  var ZKEY = 'zai-web-v1';
+  var GUEST_EMAIL = /@guest\.com$/i;
+  function guestAccount(acc) {
+    try {
+      if (!acc || typeof acc !== 'object') return false;
+      if (String(acc.role || '').toLowerCase() === 'guest') return true;
+      if (GUEST_EMAIL.test(String(acc.email || ''))) return true;
+      if (/^Guest-\d+$/i.test(String(acc.name || ''))) return true;
+      if (acc.token && isGuestJwtShape(acc.token)) return true;
+    } catch (_) {}
+    return false;
+  }
+  function isGuestJwtShape(tok) {
+    try {
+      var p = String(tok || '').split('.')[1];
+      if (!p) return false;
+      p = p.replace(/-/g, '+').replace(/_/g, '/');
+      while (p.length % 4) p += '=';
+      var j = JSON.parse(decodeURIComponent(escape(atob(p))));
+      if (String(j && j.role || '').toLowerCase() === 'guest') return true;
+      if (GUEST_EMAIL.test(String(j && j.email || ''))) return true;
+    } catch (_) {}
+    return false;
+  }
+  try {
+    var rawStore = localStorage.getItem(ZKEY);
+    if (rawStore) {
+      var jStore = JSON.parse(rawStore);
+      var changed = false;
+      /* 1) гостевой аккаунт из старых сессий — вон */
+      if (guestAccount(jStore.account)) { jStore.account = null; changed = true; window.__z16guestKicked = true; }
+      /* 2) режимы уже импортированных чатов: серверный маркер агента (type/flags/bot_id)
+            мы запоминали при открытии чата — исправляем неправильные вкладки */
+      try {
+        var modeMap = JSON.parse(localStorage.getItem('z16chatmodes') || '{}');
+        var chats = Array.isArray(jStore.chats) ? jStore.chats : null;
+        if (chats) {
+          for (var ci = 0; ci < chats.length; ci++) {
+            var ch = chats[ci];
+            if (ch && ch.zaiId && modeMap[ch.zaiId] && ch.mode !== modeMap[ch.zaiId]) {
+              ch.mode = modeMap[ch.zaiId]; changed = true;
+            }
+          }
+        }
+      } catch (_) {}
+      if (changed) localStorage.setItem(ZKEY, JSON.stringify(jStore));
+    }
+  } catch (_) {}
+  try {
+    var _si = Storage.prototype.setItem, _gi = Storage.prototype.getItem;
+    var pendV = null, pendT = 0;
+    Storage.prototype.setItem = function (k, v) {
+      if (k === ZKEY) { pendV = v; if (!pendT) pendT = setTimeout(flushStore, 700); return; }
+      return _si.call(this, k, v);
+    };
+    Storage.prototype.getItem = function (k) {
+      if (k === ZKEY && pendV !== null) return pendV;
+      return _gi.call(this, k);
+    };
+    function flushStore() {
+      if (pendV === null) return;
+      var v = pendV; pendV = null; pendT = 0;
+      try { _si.call(localStorage, ZKEY, v); } catch (_) {}
+    }
+    document.addEventListener('visibilitychange', function () { if (document.hidden) flushStore(); });
+    window.addEventListener('pagehide', flushStore);
+  } catch (_) {}
 
   /* ================= утилиты ================= */
   function $(s, r) { try { return (r || document).querySelector(s); } catch (_) { return null; } }
@@ -105,7 +182,8 @@
   } catch (_) {}
   var realFetch = window.fetch.bind(window);
 
-  /* гостевой JWT? payload.role === 'guest' у chat.z.ai — такой токен входом не считается */
+  /* гостевой JWT? v21: у новых гостевых сессий Z.ai в токене НЕТ role:'guest' —
+     гость помечен email'ом guest-…@guest.com (проверено на живой сессии). */
   function isGuestJwt(tok) {
     try {
       var p = String(tok || '').split('.')[1];
@@ -113,7 +191,10 @@
       p = p.replace(/-/g, '+').replace(/_/g, '/');
       while (p.length % 4) p += '=';
       var j = JSON.parse(decodeURIComponent(escape(atob(p))));
-      return String(j && j.role || '').toLowerCase() === 'guest';
+      if (String(j && j.role || '').toLowerCase() === 'guest') return true;
+      if (/@guest\.com$/i.test(String(j && j.email || ''))) return true;
+      if (/^Guest-\d+$/i.test(String(j && j.name || ''))) return true;
+      return false;
     } catch (_) { return false; }
   }
 
@@ -323,6 +404,69 @@
           return sleep(DELAYS[Math.min(attempt - 1, DELAYS.length - 1)]).then(run);
         });
       }
+      /* v21: ГОСТЬ — резать на всех путях. У новых гостевых сессий Z.ai роль есть
+         только в ответе /api/v1/auths/ (в токене её нет). Отдаём 403 с честным
+         текстом — диалог входа покажет ошибку, гостевой акк не создаётся. */
+      if (method === 'GET' && /\/api\/v1\/auths\/?$/.test(url)) {
+        return run().then(function (res) {
+          try {
+            return res.clone().text().then(function (t) {
+              var j = null;
+              try { j = JSON.parse(t); } catch (_) { return res; }
+              var guest = j && (
+                String(j.role || '').toLowerCase() === 'guest' ||
+                /@guest\.com$/i.test(String(j.email || '')) ||
+                /^Guest-\d+$/i.test(String(j.name || '')) ||
+                isGuestJwt(j.token)
+              );
+              if (!guest) return res;
+              return new Response(JSON.stringify({
+                detail: isEn()
+                  ? 'Guest sessions are disabled in ZaiChat. Sign in to your own account (Google / email) on chat.z.ai and paste the fresh token.'
+                  : 'Гостевые сессии отключены в ZaiChat. Войдите в свой аккаунт (Google / email) на chat.z.ai и вставьте свежий токен.'
+              }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+            }).catch(function () { return res; });
+          } catch (_) { return res; }
+        });
+      }
+
+      /* v21: режим агента у чатов сайта Z.ai. Зеркало определяет агента только по
+         models[0]='general_agent', но сайт Z.ai помечает агентные чаты полями
+         type/flags/bot_id, а models держит настоящую модель → при синхронизации
+         агентные чаты падали во вкладку «Чат». Чиним ответ: добавляем маркер. */
+      var mChDetail = method === 'GET' && /\/api\/v1\/chats\/[0-9a-f-]{8,36}\/?$/i.test(url);
+      if (mChDetail) {
+        return run().then(function (res) {
+          if (!res.ok) return res;
+          try {
+            return res.clone().text().then(function (t) {
+              var j = null;
+              try { j = JSON.parse(t); } catch (_) { return res; }
+              var c = j && (j.chat || j);
+              if (!c || typeof c !== 'object') return res;
+              var models = Array.isArray(c.models) ? c.models : [];
+              var first = String(models[0] || '');
+              var AG = ['general_agent', 'write', 'analysis', 'web_dev', 'intern', 'ppt_agent'];
+              var agent = (c.type && c.type !== 'default') ||
+                (c.meta && c.meta.bot_id) ||
+                (Array.isArray(c.flags) && c.flags.some(function (f) { return AG.indexOf(f) !== -1; })) ||
+                AG.indexOf(first) !== -1;
+              try {
+                var cid = String(c.id || (j.chat && j.chat.id) || '');
+                if (cid) {
+                  var mm = JSON.parse(localStorage.getItem('z16chatmodes') || '{}');
+                  var want = agent ? 'agent' : 'chat';
+                  if (mm[cid] !== want) { mm[cid] = want; localStorage.setItem('z16chatmodes', JSON.stringify(mm)); }
+                }
+              } catch (_) {}
+              if (!agent || AG.indexOf(first) !== -1) return res;
+              c.models = ['general_agent'].concat(models);
+              try { return new Response(JSON.stringify(j), { status: res.status, headers: res.headers }); } catch (_) { return res; }
+            }).catch(function () { return res; });
+          } catch (_) { return res; }
+        });
+      }
+
       return run();
     } catch (e) {
       return realFetch(input, init);
@@ -655,6 +799,10 @@
   }
   function releasePins() {
     $$('.z16-pinned').forEach(function (wr) {
+      /* v21: закрывающееся меню не трогаем — снятие стилей в кадрах анимации
+         выхода и было видимым миганием. CSS v21 всё равно гасит эти кадры. */
+      var cont = wr.firstElementChild;
+      if (cont && cont.getAttribute('data-state') === 'closed') return;
       wr.classList.remove('z16-pinned');
       ['top', 'left', 'transform', 'max-height', 'overflow-y'].forEach(function (p) {
         try { wr.style.removeProperty(p); } catch (_) {}
@@ -784,26 +932,51 @@
   function subToggleGuard() {
     if (window.__z16subT) return;
     window.__z16subT = true;
+    var synthLeave = function (el, x, y) {
+      try {
+        var o = { bubbles: true, pointerId: 1, pointerType: 'mouse', isPrimary: true, clientX: x || 0, clientY: y || 0 };
+        el.dispatchEvent(new PointerEvent('pointerout', o));
+        el.dispatchEvent(new PointerEvent('pointerleave', o));
+      } catch (_) {}
+    };
     document.addEventListener('pointerdown', function (e) {
       try {
         var el = e.target && e.target.closest ? e.target.closest('[role="menuitem"]') : null;
         if (!el || !el.closest('[data-radix-popper-content-wrapper]')) return;
         var open = el.getAttribute('aria-expanded') === 'true' || el.getAttribute('data-state') === 'open';
         if (!open) return;
-        var o = { bubbles: true, pointerId: e.pointerId || 1, pointerType: 'mouse', isPrimary: true, clientX: e.clientX, clientY: e.clientY };
-        el.dispatchEvent(new PointerEvent('pointerout', o));
-        el.dispatchEvent(new PointerEvent('pointerleave', o));
-        /* Radix закрывает подменю с задержкой-грацией — даём ему кадр */
-        setTimeout(function () {
-          try {
-            var o2 = { bubbles: true, pointerId: e.pointerId || 1, pointerType: 'mouse', isPrimary: true, clientX: e.clientX, clientY: e.clientY };
-            el.dispatchEvent(new PointerEvent('pointerout', o2));
-            el.dispatchEvent(new PointerEvent('pointerleave', o2));
-          } catch (_) {}
-        }, 60);
         e.stopImmediatePropagation();
         e.preventDefault();
         vibrate(6);
+        /* v21: за нашим блоком следует pointerup+click — click заново ОТКРЫВАЕТ
+           подменю (Radix toggles на click). Гасим клик по этому же триггеру. */
+        window.__z16subTapEl = el;
+        window.__z16subTapT = Date.now();
+        /* v21: Radix игнорирует уход курсора, синтезированный ВНУТРИ обработки
+           pointerdown. Поэтому уводим курсор из чистой задачи, а если подменю
+           всё ещё открыто — повторяем по всем открытым триггерам. */
+        setTimeout(function () {
+          try {
+            synthLeave(el, e.clientX, e.clientY);
+            setTimeout(function () {
+              try {
+                var still = $$('[data-radix-popper-content-wrapper] [role="menuitem"][aria-expanded="true"], ' +
+                  '[data-radix-popper-content-wrapper] [role="menuitem"][data-state="open"]');
+                still.forEach(function (t2) { synthLeave(t2, e.clientX, e.clientY); });
+              } catch (_) {}
+            }, 90);
+          } catch (_) {}
+        }, 30);
+      } catch (_) {}
+    }, true);
+    document.addEventListener('click', function (e) {
+      try {
+        if (!window.__z16subTapT || Date.now() - window.__z16subTapT > 700) return;
+        var el = window.__z16subTapEl;
+        if (el && (e.target === el || (e.target && e.target.contains && e.target.contains(el)) || (el.contains && el.contains(e.target)))) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
       } catch (_) {}
     }, true);
   }
@@ -1482,14 +1655,14 @@
           });
         }
       });
-      /* 2) пояснение про безопасность */
+      /* 2) пояснение про безопасность + v21: что делать, если открылся чат */
       var note = document.createElement('p');
       note.className = 'z16-note';
       note.style.cssText = 'margin-top:12px;font-size:11px;line-height:1.5;opacity:.55';
       note.textContent = window.ZaiApp
         ? (isEn()
-          ? 'Sign-in happens inside the app: the Z.ai page opens, the token is captured automatically. Guest mode is disabled. The token stays on this device and is sent only to Z.ai servers.'
-          : 'Вход проходит внутри приложения: откроется страница Z.ai, токен подхватится автоматически. Гостевого режима больше нет. Токен хранится только на этом устройстве и отправляется только серверам Z.ai.')
+          ? 'Sign-in happens inside the app: the Z.ai page opens — if a chat appears instead of the login, tap "Sign in" in the top corner of that page and sign in; the app will return by itself. Guest mode is disabled. The token stays on this device and is sent only to Z.ai servers.'
+          : 'Вход проходит внутри приложения: откроется страница Z.ai — если вместо входа открылся чат, нажмите там «Sign in» (справа вверху) и войдите; приложение вернётся само. Гостевого режима больше нет. Токен хранится только на этом устройстве и отправляется только серверам Z.ai.')
         : (isEn()
           ? 'Tip: in the ZaiChat app signing in takes one tap. Here: sign in on chat.z.ai and paste the token. The token stays on this device and is sent only to Z.ai servers.'
           : 'Совет: в приложении ZaiChat вход происходит в один тап. Здесь же: войдите на chat.z.ai и вставьте токен. Токен хранится только на этом устройстве и отправляется только серверам Z.ai.');
@@ -1539,6 +1712,45 @@
           });
         } catch (_) { window.__onZaiToken = null; }
       }
+    } catch (_) {}
+  }
+  /* v21: вход в приложении. Пользователь жмёт «Войти через Z.ai» → приложение
+     уходит на chat.z.ai, и если там по старой сессии сразу открылся ЧАТ, а не
+     вход, человек возвращается ни с чем. Помечаем попытку и после возврата
+     подсказываем, где кнопка Sign in. */
+  function installLoginHints() {
+    if (window.__z16LoginHint) return;
+    window.__z16LoginHint = true;
+    try {
+      var tryAcc = function () {
+        try {
+          var j = JSON.parse(localStorage.getItem(ZKEY) || '{}');
+          return j && j.account;
+        } catch (_) { return null; }
+      };
+      document.addEventListener('click', function (e) {
+        try {
+          if (!window.ZaiApp) return;
+          var b = e.target && e.target.closest ? e.target.closest('button') : null;
+          if (!b) return;
+          var t = (b.textContent || '').trim();
+          if (t.indexOf('Войти через Z.ai') === 0 || t.indexOf('Sign in via Z.ai') === 0) {
+            sessionStorage.setItem('z16logintried', String(Date.now()));
+          }
+        } catch (_) {}
+      }, true);
+      window.__z16LoginHintCheck = function () {
+        try {
+          if (!window.ZaiApp) return;
+          var t0 = +sessionStorage.getItem('z16logintried') || 0;
+          if (!t0 || Date.now() - t0 > 10 * 60 * 1000) return;
+          if (tryAcc()) { sessionStorage.removeItem('z16logintried'); return; }
+          sessionStorage.removeItem('z16logintried');
+          toast(isEn()
+            ? 'Z.ai opened a chat instead of the login? Tap "Sign in" in its top corner and sign in — the app will return by itself.'
+            : 'Z.ai открылся чатом вместо входа? Нажмите там «Sign in» (справа вверху) и войдите — приложение вернётся само.', 6000);
+        } catch (_) {}
+      };
     } catch (_) {}
   }
 
@@ -1731,22 +1943,74 @@
      скачивается один раз и кэшируется браузером. ВАЖНО (и написано в меню):
      это эксперимент — качество и скорость ответов не гарантированы и зависят
      от телефона. В основной чат приложение не вмешивается. */
-  var LOCAL_MODELS = [
-    { ram: '1–2 ГБ', dm: 1, name: 'Qwen2.5 0.5B', size: '~0,5 ГБ', ctx: 1536, note: 'Самая лёгкая — для слабых телефонов',
-      url: 'https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf' },
-    { ram: '3–4 ГБ', dm: 3, name: 'Qwen2.5 1.5B', size: '~1 ГБ', ctx: 2048, note: 'Шустрый вариант для средних телефонов',
-      url: 'https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf' },
-    { ram: '5–6 ГБ', dm: 5, name: 'Llama 3.2 3B', size: '~2 ГБ', ctx: 2048, note: 'Заметно умнее, но отвечает медленнее',
-      url: 'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf' },
-    { ram: '7–8 ГБ', dm: 7, name: 'Phi-3.5 mini', size: '~2,4 ГБ', ctx: 2048, note: 'Хороший баланс для 8 ГБ ОЗУ',
-      url: 'https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf' },
-    { ram: '10–12 ГБ', dm: 10, name: 'Qwen2.5 7B', size: '~4,7 ГБ', ctx: 2048, note: 'Почти как облачные, но медленно',
-      url: 'https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf' },
-    { ram: '14–16 ГБ', dm: 14, name: 'Qwen2.5 14B', size: '~9 ГБ', ctx: 2048, note: 'Только для флагманов',
-      url: 'https://huggingface.co/bartowski/Qwen2.5-14B-Instruct-GGUF/resolve/main/Qwen2.5-14B-Instruct-Q4_K_M.gguf' },
-    { ram: '18–24 ГБ', dm: 18, name: 'Qwen2.5 32B', size: '~20 ГБ', ctx: 2048, note: 'Очень долгая загрузка и ответы',
-      url: 'https://huggingface.co/bartowski/Qwen2.5-32B-Instruct-GGUF/resolve/main/Qwen2.5-32B-Instruct-Q4_K_M.gguf' }
+  /* v21: каталог по категориям ОЗУ (просьба владельца: «сделай больше вариантов
+     для каждого кол-во оперы… например 4 озу — менюшку с выбором моделей,
+     открывается вниз плавно»). В каждой категории несколько моделей; файлы —
+     GGUF Q4_K_M с HuggingFace (bartowski), ссылки проверены HEAD-запросами. */
+  var LOCAL_CATS = [
+    { ram: 'до 2 ГБ', dm: 1, note: isEn() ? 'For very old or budget phones' : 'Для очень старых или бюджетных телефонов', models: [
+      { name: 'SmolLM2 360M', size: '~0,3 ГБ', ctx: 1536, note: 'Крошечная, отвечает почти сразу',
+        url: 'https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q4_K_M.gguf' },
+      { name: 'Qwen2.5 0.5B', size: '~0,5 ГБ', ctx: 1536, note: 'Самая лёгкая из полноценных',
+        url: 'https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf' },
+      { name: 'Llama 3.2 1B', size: '~0,8 ГБ', ctx: 2048, note: 'Заметно умнее крошек',
+        url: 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf' }
+    ] },
+    { ram: '4 ГБ', dm: 3, note: isEn() ? 'Average phones' : 'Средние телефоны', models: [
+      { name: 'Qwen2.5 1.5B', size: '~1,1 ГБ', ctx: 2048, note: 'Шустрый вариант для средних телефонов',
+        url: 'https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf' },
+      { name: 'SmolLM2 1.7B', size: '~1,1 ГБ', ctx: 2048, note: 'Живой разговорный стиль',
+        url: 'https://huggingface.co/bartowski/SmolLM2-1.7B-Instruct-GGUF/resolve/main/SmolLM2-1.7B-Instruct-Q4_K_M.gguf' },
+      { name: 'Qwen3 1.7B', size: '~1,4 ГБ', ctx: 2048, note: 'Новее и соображает быстрее',
+        url: 'https://huggingface.co/bartowski/Qwen_Qwen3-1.7B-GGUF/resolve/main/Qwen_Qwen3-1.7B-Q4_K_M.gguf' },
+      { name: 'Gemma 2 2B', size: '~1,7 ГБ', ctx: 2048, note: 'Google, приятно пишет тексты',
+        url: 'https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf' }
+    ] },
+    { ram: '6 ГБ', dm: 5, note: isEn() ? 'Comfortable level' : 'Уже комфортный уровень', models: [
+      { name: 'Llama 3.2 3B', size: '~2 ГБ', ctx: 2048, note: 'Заметно умнее, но отвечает медленнее',
+        url: 'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf' },
+      { name: 'Qwen2.5 3B', size: '~1,9 ГБ', ctx: 2048, note: 'Хороший баланс скорости и ума',
+        url: 'https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf' },
+      { name: 'Phi-3.5 mini', size: '~2,4 ГБ', ctx: 2048, note: 'Microsoft, силён в рассуждениях',
+        url: 'https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf' },
+      { name: 'Qwen3 4B', size: '~2,5 ГБ', ctx: 2048, note: 'Почти флагман среди маленьких',
+        url: 'https://huggingface.co/bartowski/Qwen_Qwen3-4B-GGUF/resolve/main/Qwen_Qwen3-4B-Q4_K_M.gguf' }
+    ] },
+    { ram: '8 ГБ', dm: 7, note: isEn() ? 'Modern mid-range' : 'Современные средние модели', models: [
+      { name: 'Mistral 7B v0.3', size: '~4,4 ГБ', ctx: 2048, note: 'Классика, уверенные ответы',
+        url: 'https://huggingface.co/bartowski/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf' },
+      { name: 'Qwen2.5 7B', size: '~4,7 ГБ', ctx: 2048, note: 'Почти как облачные, но медленно',
+        url: 'https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf' },
+      { name: 'Llama 3.1 8B', size: '~4,9 ГБ', ctx: 2048, note: 'Meta, сильная универсальная',
+        url: 'https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf' }
+    ] },
+    { ram: '12 ГБ', dm: 10, note: isEn() ? 'Flagmans of past years' : 'Флагманы прошлых лет', models: [
+      { name: 'Qwen3 8B', size: '~5 ГБ', ctx: 2048, note: 'Свежая и умная',
+        url: 'https://huggingface.co/bartowski/Qwen_Qwen3-8B-GGUF/resolve/main/Qwen_Qwen3-8B-Q4_K_M.gguf' },
+      { name: 'Gemma 2 9B', size: '~5,8 ГБ', ctx: 2048, note: 'Google, аккуратные тексты',
+        url: 'https://huggingface.co/bartowski/gemma-2-9b-it-GGUF/resolve/main/gemma-2-9b-it-Q4_K_M.gguf' },
+      { name: 'Mistral Nemo 12B', size: '~7,5 ГБ', ctx: 2048, note: 'Большая, отвечает неспешно',
+        url: 'https://huggingface.co/bartowski/Mistral-Nemo-Instruct-2407-GGUF/resolve/main/Mistral-Nemo-Instruct-2407-Q4_K_M.gguf' }
+    ] },
+    { ram: '16 ГБ', dm: 14, note: isEn() ? 'Top phones and tablets' : 'Топовые телефоны и планшеты', models: [
+      { name: 'Qwen3 14B', size: '~9 ГБ', ctx: 2048, note: 'Умница, но долго грузится',
+        url: 'https://huggingface.co/bartowski/Qwen_Qwen3-14B-GGUF/resolve/main/Qwen_Qwen3-14B-Q4_K_M.gguf' },
+      { name: 'Phi-4 14B', size: '~9,1 ГБ', ctx: 2048, note: 'Microsoft, сильная математика',
+        url: 'https://huggingface.co/bartowski/phi-4-GGUF/resolve/main/phi-4-Q4_K_M.gguf' },
+      { name: 'Qwen2.5 14B', size: '~9 ГБ', ctx: 2048, note: 'Проверенная классика',
+        url: 'https://huggingface.co/bartowski/Qwen2.5-14B-Instruct-GGUF/resolve/main/Qwen2.5-14B-Instruct-Q4_K_M.gguf' }
+    ] },
+    { ram: '24 ГБ', dm: 18, note: isEn() ? 'Only for top devices — very slow' : 'Только для топ-устройств — очень медленно', models: [
+      { name: 'Gemma 3 27B', size: '~16,5 ГБ', ctx: 2048, note: 'Самая умная из списка',
+        url: 'https://huggingface.co/bartowski/google_gemma-3-27b-it-GGUF/resolve/main/google_gemma-3-27b-it-Q4_K_M.gguf' },
+      { name: 'Qwen3 30B-A3B', size: '~18,6 ГБ', ctx: 2048, note: 'MoE: отвечает заметно быстрее обычных больших моделей',
+        url: 'https://huggingface.co/bartowski/Qwen_Qwen3-30B-A3B-GGUF/resolve/main/Qwen_Qwen3-30B-A3B-Q4_K_M.gguf' },
+      { name: 'Qwen2.5 32B', size: '~20 ГБ', ctx: 2048, note: 'Очень долгая загрузка и ответы',
+        url: 'https://huggingface.co/bartowski/Qwen2.5-32B-Instruct-GGUF/resolve/main/Qwen2.5-32B-Instruct-Q4_K_M.gguf' }
+    ] }
   ];
+  var LOCAL_MODELS = []; /* плоский список для совместимости (downloaded-карточки) */
+  LOCAL_CATS.forEach(function (c) { c.models.forEach(function (m) { LOCAL_MODELS.push(m); }); });
   var WLLAMA_CDN = 'https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.1/esm';
   var locW = null, locBusy = false, locAbort = false, locGen = false, locHist = [];
 
@@ -1773,6 +2037,12 @@
      (div[class*="bg-sidebar"]). Вставляем в ВИДИМЫЙ контейнер (ширина > 0);
      если кнопка осталась в скрытом — перевставляем. */
   function addLocalAiBtn() {
+    /* v21: быстрый путь — кнопка на месте и видима, ничего не делаем (без rect-ов) */
+    var have = $('.z16-local-btn');
+    if (have) {
+      var hr = have.getBoundingClientRect();
+      if (hr.width > 0 && hr.height > 0) return;
+    }
     var cands = $$('aside, div[class*="bg-sidebar"]');
     var side = null;
     for (var i = 0; i < cands.length; i++) {
@@ -1800,7 +2070,7 @@
     }, true);
     side.appendChild(b);
   }
-  /* меню выбора модели по объёму ОЗУ */
+  /* меню выбора модели: категории ОЗУ, тап — плавное раскрытие списка моделей вниз */
   function openLocalMenu() {
     try {
       var old = $('.z16-local-wrap');
@@ -1810,22 +2080,34 @@
       var dm = 0;
       try { dm = navigator.deviceMemory || 0; } catch (_) {}
       var recDm = 0;
-      LOCAL_MODELS.forEach(function (m) { if (dm >= m.dm + 1) recDm = m.dm; });
-      var rows = '';
-      LOCAL_MODELS.forEach(function (m) {
-        var rec = m.dm === recDm;
-        rows += '<div class="z16-local-model' + (rec ? ' z16-local-rec' : '') + '" data-url="' + m.url + '">' +
-          '<div class="z16-local-mhead"><span class="z16-local-mname"></span><span class="z16-local-msize"></span></div>' +
-          '<div class="z16-local-mnote"></div>' +
-          '<div class="z16-local-mrow"><span class="z16-local-mram"></span>' +
-          '<button type="button" class="z16-local-dl"></button></div></div>';
+      LOCAL_CATS.forEach(function (c) { if (dm >= c.dm + 1) recDm = c.dm; });
+      var dlMap = locDownloadedMap();
+      var cats = '';
+      LOCAL_CATS.forEach(function (c, ci) {
+        var rec = c.dm === recDm;
+        var rows = '';
+        c.models.forEach(function (m, mi) {
+          rows += '<div class="z16-local-model' + (rec && mi === 0 ? ' z16-local-rec' : '') + '" data-url="' + m.url + '">' +
+            '<div class="z16-local-mhead"><span class="z16-local-mname"></span><span class="z16-local-msize"></span></div>' +
+            '<div class="z16-local-mnote"></div>' +
+            '<div class="z16-local-mrow"><button type="button" class="z16-local-dl"></button></div></div>';
+        });
+        cats += '<div class="z16-local-cat' + (rec ? ' z16-cat-rec' : '') + '" data-ci="' + ci + '">' +
+          '<button type="button" class="z16-local-catbtn">' +
+          '<span class="z16-local-cattitle"></span>' +
+          (rec ? '<span class="z16-local-badge2 z16-cat-badge"></span>' : '') +
+          '<span class="z16-local-catnote"></span>' +
+          '<svg class="z16-local-catarr" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>' +
+          '</button>' +
+          '<div class="z16-local-catsub"><div class="z16-local-catsub-in">' + rows + '</div></div>' +
+          '</div>';
       });
       wrap.innerHTML = '<div class="z16-local-card" role="dialog" aria-modal="true">' +
         '<div class="z16-local-top"><p class="z16-local-title"></p><span class="z16-local-badge2"></span>' +
         '<button type="button" class="z16-local-x" aria-label="Закрыть">✕</button></div>' +
         '<p class="z16-local-disc"></p>' +
         '<p class="z16-local-dev"></p>' +
-        '<div class="z16-local-list">' + rows + '</div>' +
+        '<div class="z16-local-cats">' + cats + '</div>' +
         '<div class="z16-local-statusbox"><div class="z16-local-bar"><i></i></div><p class="z16-local-status"></p></div>' +
         '</div>';
       var card = $('.z16-local-card', wrap);
@@ -1835,23 +2117,48 @@
         ? 'Chat without internet on small open models. Experimental: quality and speed are NOT guaranteed and depend on your phone. The first launch downloads the model once, after that it works offline.'
         : 'Чат без интернета на маленьких открытых моделях. Это ЭКСПЕРИМЕНТ: качество и скорость ответов не гарантированы и зависят от телефона. При первом запуске модель скачивается один раз, дальше работает офлайн.';
       $('.z16-local-dev', card).textContent = dm > 0
-        ? (isEn() ? 'Browser sees ~' + dm + ' GB of RAM — a fitting option is highlighted' : 'Браузер видит примерно ' + dm + ' ГБ ОЗУ — подходящий вариант подсвечен')
+        ? (isEn() ? 'Browser sees ~' + dm + ' GB of RAM — a fitting category is highlighted' : 'Браузер видит примерно ' + dm + ' ГБ ОЗУ — подходящая категория подсвечена')
         : (isEn() ? 'Could not detect RAM — pick by your phone specs' : 'Объём ОЗУ определить не удалось — выберите по характеристикам телефона');
-      var models = $$('.z16-local-model', card);
-      models.forEach(function (el, i) {
-        var m = LOCAL_MODELS[i];
-        $('.z16-local-mname', el).textContent = m.name;
-        $('.z16-local-msize', el).textContent = m.size;
-        $('.z16-local-mnote', el).textContent = m.note;
-        $('.z16-local-mram', el).textContent = (isEn() ? 'RAM: ' : 'ОЗУ: ') + m.ram;
-        var dlMap = locDownloadedMap();
-        $('.z16-local-dl', el).textContent = dlMap[m.url]
-          ? (isEn() ? 'Open chat (downloaded)' : 'Открыть чат (скачано)')
-          : (isEn() ? 'Download & open chat' : 'Скачать и открыть чат');
+      /* категории: подпись + стрелка + плавное раскрытие */
+      var catEls = $$('.z16-local-cat', card);
+      catEls.forEach(function (el) {
+        var c = LOCAL_CATS[+el.getAttribute('data-ci')];
+        var nDl = c.models.filter(function (m) { return dlMap[m.url]; }).length;
+        $('.z16-local-cattitle', el).textContent = (isEn() ? 'RAM ' : 'ОЗУ ') + c.ram;
+        $('.z16-local-catnote', el).textContent =
+          nDl > 0 ? (isEn() ? 'downloaded: ' + nDl : 'скачано: ' + nDl) : c.note;
+        var badge = $('.z16-cat-badge', el);
+        if (badge) badge.textContent = isEn() ? 'for you' : 'вам подойдёт';
+        $('.z16-local-catbtn', el).addEventListener('click', function (e) {
+          e.preventDefault();
+          vibrate(5);
+          var wasOpen = el.classList.contains('z16-open');
+          catEls.forEach(function (o) { if (o !== el) o.classList.remove('z16-open'); });
+          el.classList.toggle('z16-open', !wasOpen);
+        });
+        var modelEls = $$('.z16-local-model', el);
+        modelEls.forEach(function (mel, mi) {
+          var m = c.models[mi];
+          $('.z16-local-mname', mel).textContent = m.name;
+          $('.z16-local-msize', mel).textContent = m.size;
+          $('.z16-local-mnote', mel).textContent = m.note;
+          var btn = $('.z16-local-dl', mel);
+          btn.textContent = dlMap[m.url]
+            ? (isEn() ? 'Open chat (downloaded)' : 'Открыть чат (скачано)')
+            : (isEn() ? 'Download & open chat' : 'Скачать и открыть чат');
+          btn.addEventListener('click', function (ev) {
+            ev.preventDefault();
+            if (locBusy) return;
+            var st = $('.z16-local-status', card);
+            var bar = $('.z16-local-bar i', card);
+            startLocalChat(m, st, bar, card);
+          });
+        });
       });
+      /* подсвеченную категорию раскрываем сразу */
+      var recEl = $('.z16-local-cat.z16-cat-rec', card);
+      if (recEl) recEl.classList.add('z16-open');
       document.body.appendChild(wrap);
-      var st = $('.z16-local-status', card);
-      var bar = $('.z16-local-bar i', card);
       var close = function () {
         locAbort = true;
         try { if (locGen && locW && locW.abort) locW.abort(); } catch (_) {}
@@ -1860,12 +2167,6 @@
       };
       $('.z16-local-x', card).addEventListener('click', close);
       wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
-      $$('.z16-local-dl', card).forEach(function (btn, i) {
-        btn.addEventListener('click', function () {
-          if (locBusy) return;
-          startLocalChat(LOCAL_MODELS[i], st, bar, card);
-        });
-      });
     } catch (_) {}
   }
   function startLocalChat(m, st, bar, card) {
@@ -2019,24 +2320,39 @@
     try { fixChatMenu(); } catch (_) {}
     try { fixSettingsLang(); } catch (_) {}
     try { addLocalAiBtn(); } catch (_) {}
+    try { installLoginHints(); } catch (_) {}
+    try { if (window.__z16LoginHintCheck && sweep.__n > 0) window.__z16LoginHintCheck(); } catch (_) {}
+    try {
+      if (window.__z16guestKicked && !sweep.__g) { /* v21: гостя выкинули при старте */
+        sweep.__g = true;
+        toast(isEn() ? 'Guest session disabled — please sign in to your account' : 'Гостевая сессия отключена — войдите в свой аккаунт', 5000);
+      }
+    } catch (_) {}
   }
   function onMut(muts) {
     /* v20 АНТИ-МИГАНИЕ: смотрим В addedNodes. Radix монтирует поппер прямо в
        body — раньше target был body, наш поиск по target ничего не находил,
        и меню успевало отрисоваться с нативными подписями (кадр «Лоу/Хай»),
-       а подсказки — с нативными текстами. Теперь ловим в кадре монтирования. */
+       а подсказки — с нативными текстами. Теперь ловим в кадре монтирования.
+       v21 ПРОТИВ ЛАГОВ: при переключении чатов приходят тысячи записей —
+       обрабатываем не больше 200, а querySelector по большим поддеревьям
+       (сотни узлов) пропускаем: попперы Radix всегда приходят мелкими узлами. */
     var popperTouched = false, mainTouched = false;
-    for (var i = 0; i < muts.length; i++) {
+    var lim = Math.min(muts.length, 200);
+    for (var i = 0; i < lim; i++) {
       var m = muts[i];
       var nds = m.addedNodes;
       if (nds && nds.length) {
         for (var j = 0; j < nds.length; j++) {
           var nd = nds[j];
           if (!nd || nd.nodeType !== 1) continue;
-          var wr = nd.matches && nd.matches('[data-radix-popper-content-wrapper]') ? nd
-            : (nd.querySelector ? nd.querySelector('[data-radix-popper-content-wrapper]') : null);
+          var wr = null;
+          if (nd.matches && nd.matches('[data-radix-popper-content-wrapper]')) wr = nd;
+          else if (nd.querySelector && nd.childElementCount <= 60) {
+            wr = nd.querySelector('[data-radix-popper-content-wrapper]');
+          }
           if (wr) { try { newPopperHandler(wr); } catch (_) {} popperTouched = true; }
-          if (nd.tagName === 'MAIN' || (nd.querySelector && nd.querySelector('main'))) mainTouched = true;
+          if (nd.tagName === 'MAIN' || (nd.querySelector && nd.childElementCount <= 60 && nd.querySelector('main'))) mainTouched = true;
         }
       }
       var n = m.target;
@@ -2058,13 +2374,18 @@
       try { sugScan(); } catch (_) {} /* подсказки — без мигания при чат↔агент */
     }
     if (moT) clearTimeout(moT);
-    moT = setTimeout(sweep, 200);
+    moT = setTimeout(sweep, 220);
   }
   try { guardTokenBridge(); } catch (_) {}
   try {
     var mo = new MutationObserver(onMut);
     mo.observe(document.body || document.documentElement, { childList: true, subtree: true });
   } catch (_) {}
-  setInterval(sweep, 2000);
+  /* v21: фоновый обход реже (3.5с вместо 2с) и не в свёрнутом приложении;
+     подсказка про вход — со второго обхода (после возврата из Z.ai) */
+  sweep.__n = 0;
+  var _sweep = sweep;
+  sweep = function () { _sweep(); sweep.__n++; };
+  setInterval(function () { if (!document.hidden) sweep(); }, 3500);
   sweep();
 })();
